@@ -2,9 +2,9 @@
 
 **Deterministic, framework-agnostic detection of multi-agent coordination pathologies — caught at iteration 2, not on the invoice.**
 
-looptrip watches a multi-agent run as a stream of normalized events and flags the coordination pathologies that make agent systems burn money and spin: duplicate-work loops, ping-pong / livelock, deadlock, and never-termination. It is **detection-first** — it works over data you already have (OpenTelemetry GenAI spans, or a CAST `cast.db`) — and **deterministic / zero-LLM**: the same event stream always yields the same verdict. looptrip is an **observer, never a gate**; it reports, it never blocks.
+looptrip watches a multi-agent run as a stream of normalized events and flags the coordination pathologies that make agent systems burn money and spin: duplicate-work loops, ping-pong / livelock, deadlock, and non-termination. It is **detection-first** — it works over data you already have (OpenTelemetry GenAI spans, or a CAST `cast.db`) — and **deterministic / zero-LLM**: the same event stream always yields the same verdict. looptrip is an **observer, never a gate**; it reports, it never blocks.
 
-> **Phase 1 (this release)** ships the `cast.db` adapter, the duplicate-work / iteration-2 detector, and a reproducible proof on real data. The other three pathologies, counterfactual handoff attribution, and the live OpenTelemetry `SpanProcessor` land in later phases — see [Roadmap](#roadmap).
+> **Phase 2 (this release)** ships full pathology coverage (duplicate-work, ping-pong / livelock, deadlock, non-termination), configurable sensitivity controls, and the `cast.db` adapter with reproducible proof on real data. Counterfactual handoff attribution and the live OpenTelemetry `SpanProcessor` land in later phases — see [Roadmap](#roadmap).
 
 ## The headline
 
@@ -25,7 +25,7 @@ looptrip proof
 
 ## Why "iteration 2"
 
-Native runaway guards are blunt total-step counters that trip at N=10–25 — *after* the waste has compounded. looptrip's trip is a **safety predicate keyed on the pathology signature**: *no signature `(agent, tool, args_hash)` may recur without an intervening progress delta.* The instant a signature is seen a second time (within a configurable input-token tolerance, with no progress marker between), it fires — before the third wasted turn and the O(N²) context-cost compounding. "2" is the default threshold, not a magic number; the innovation is *signature-keyed, pattern-specific* detection.
+Native runaway guards are blunt total-step counters that trip at N=10–25 — *after* the waste has compounded. looptrip's trip is a **safety predicate keyed on the pathology signature**: *no signature `(agent, tool, args_hash)` may recur without an intervening progress delta.* The instant a signature is seen a second time (within a configurable input-token tolerance, with no progress marker between), it fires — before the third wasted turn and the O(N²) context-cost compounding. "2" is the default threshold, not a magic number. The approach (signature-keyed detection with configurable thresholds) is what matters — the detector itself is not the moat; the durable asset is standards authorship of the open `gen_ai.handoff` semantic convention.
 
 The worst real runaways are the hardest to catch: a `workflow-subagent` loop emits no structured handoff contract at all. So looptrip detects from the `(agent, ts)` repeat signal plus input-token variance alone; any handoff metadata only *enriches* the signal — it is never required.
 
@@ -55,13 +55,25 @@ This project tries hard not to oversell:
 
 ## Roadmap
 
-- **Phase 1 (this release)** — `cast.db` adapter + duplicate-work / iteration-2 detector + reproducible proof.
-- **Phase 2** — full pathology coverage (ping-pong / livelock, deadlock, never-terminate) + sensitivity controls.
+- **Phase 1** — `cast.db` adapter + duplicate-work / iteration-2 detector + reproducible proof.
+- **Phase 2** — full pathology coverage (ping-pong / livelock, deadlock, non-termination) + sensitivity controls.
 - **Phase 3** — counterfactual replay attribution ("which handoff was decisive").
 - **Phase 4** — live OpenTelemetry `SpanProcessor` (`on_start` detection / `on_end` attribution, AlwaysRecord sampler).
 - **Phase 5** — packaging (Claude Code plugin, Homebrew).
-- **Phase 6** — OpenTelemetry GenAI `gen_ai.handoff.*` semantic-convention contribution, with looptrip as the reference implementation.
-- **Phase 7** — launch.
+- **Phase 6** — documentation (reference deep-dives, examples, architecture notes).
+- **Phase 7** — OpenTelemetry GenAI `gen_ai.handoff.*` semantic-convention contribution, with looptrip as the reference implementation.
+- **Phase 8** — launch.
+
+## Documentation
+
+- **[Proof](docs/proof.md)** — Reproduce the $792.96 headline. Evidence that the fixture is real and reproducible.
+- **[Usage](docs/usage.md)** — CLI and library API reference, adapters, and configuration.
+- **[Architecture](docs/architecture.md)** — Detector design, event normalization, signature matching, and phase-by-phase roadmap.
+- **[Adapters](docs/adapters.md)** — Implementing a custom adapter for your event source (OTel spans, custom JSON, etc.).
+- **[Testing](docs/testing.md)** — Test structure, mutation sanity, fixture integrity, and independent re-derivation.
+- **[Framing](docs/framing.md)** — Attribution, cost baselines, related work (Watchtower), and the role of standards.
+- **[Case Studies](docs/cases/)** — Real runaways: `workflow-subagent` loops, deadlock scenarios, and non-termination traces.
+- **[Contributing](CONTRIBUTING.md)** — How to contribute, issue triage, and development setup.
 
 ## License
 

@@ -1,0 +1,354 @@
+# Authoring an Adapter
+
+An **Adapter** is a source-specific producer of normalized `Event` streams. Once you bridge your multi-agent activity log into looptrip's `Event` contract, the pathology detectors work identically—regardless of whether the events came from cast.db, OpenTelemetry, or your own application logs.
+
+## The Adapter Contract
+
+All adapters inherit from `looptrip.normalize.Adapter` and implement a single method:
+
+```python
+from looptrip.normalize import Adapter, Event
+
+class MyAdapter(Adapter):
+    def events(self) -> Iterator[Event]:
+        """Yield normalized events, ordered such that ts is non-decreasing."""
+        ...
+```
+
+The ordering constraint is **strict**—events must be sorted by their `ts` field in lexicographic order (ISO-8601 strings compare correctly). If you cannot guarantee this, sort before yielding:
+
+```python
+def events(self) -> Iterator[Event]:
+    sorted_rows = sorted(self._raw_rows, key=lambda r: r.timestamp)
+    for row in sorted_rows:
+        yield Event(...)
+```
+
+## The Event Schema
+
+Each `Event` is a frozen, hashable record:
+
+```python
+Event(
+    agent: str,              # Identity of the acting agent (load-bearing).
+    tool: str,               # Action kind. Constant for sources with no per-action tool column.
+    args_hash: Optional[str],  # Stable hash of action args, or None.
+    ts: str,                 # ISO-8601 timestamp string.
+    handoff_state: Optional[str] = None,  # Parsed ## Handoff state (enrichment; never required).
+    input_tokens: Optional[int] = None,    # Prompt-token count, if known.
+    cost_usd: Optional[float] = None,      # Action cost in USD, if known.
+    progress: bool = False,  # True iff this event marks a state delta.
+    raw_id: Any = None,      # Provenance pointer to the source row (e.g., agent_runs.id).
+)
+```
+
+The **signature** (load-bearing triple for duplicate-work detection) is:
+
+```python
+event.signature() == (agent, tool, args_hash)
+```
+
+Two events with identical signatures are duplicate-work candidates; detection confirms a trip using `ts` ordering, input-token variance via `_args_similar()`, and absence of a `progress` delta.
+
+## Field Mapping Guide
+
+### Load-Bearing Fields (Required)
+
+| Event Field | Semantics | How to Populate |
+|---|---|---|
+| `agent` | Identity of the acting entity | Source column (e.g., `agent_runs.agent` in cast.db, `attributes["service.name"]` in OTel) |
+| `tool` | Action kind; constant for sources with no per-action tool column | For structured sources (OTel): hash the operation/endpoint. For unstructured (cast.db): constant like `"dispatch"` |
+| `args_hash` | Deterministic SHA-1 digest of action arguments, or None | Call `looptrip.normalize.args_hash_from(*parts)` for structured args; `None` if unavailable (cast.db case) |
+| `ts` | ISO-8601 timestamp string; must sort correctly lexicographically | Ensure string format: `"2026-06-21T14:30:00Z"` or similar. Verify ordering before yielding. |
+
+### Enrichment Fields (Optional but Recommended)
+
+| Event Field | Semantics | How to Populate |
+|---|---|---|
+| `handoff_state` | Parsed `## Handoff` block state (e.g., status, files_changed) | Extract from source if available; `None` for STATUS_CONTRACT_EXEMPT agents or when unavailable. Required only by the deadlock detector. |
+| `input_tokens` | Prompt-token count for the action | Source column (e.g., `agent_runs.input_tokens`). Used by duplicate-work detector for token-variance tolerance. |
+| `cost_usd` | Cost in USD, full precision | Source column or computed from input/output tokens. Critical for `prevented_cost` reporting. |
+| `progress` | True iff this event marks a progress delta | Extract from source (e.g., `status != "DONE_WITH_CONCERNS"`, or parse `## Handoff` block for explicit progress marker). |
+| `raw_id` | Provenance pointer back to the source row | Source primary key or unique identifier; enables forensic backtrace to the original record. |
+
+## Cast.db Adapter: The Worked Example
+
+The cast.db `agent_runs` table maps directly to the simplest adapter case: a source with **no per-dispatch tool/args columns**.
+
+### Source Schema (Relevant Columns)
+
+```sql
+agent_runs (
+  id INTEGER PRIMARY KEY,
+  session_id TEXT,
+  agent TEXT,           -- Load-bearing: maps directly to Event.agent
+  started_at TEXT,      -- ISO-8601; maps to Event.ts
+  input_tokens INTEGER,
+  cost_usd REAL,
+  status TEXT           -- "DONE", "DONE_WITH_CONCERNS", "BLOCKED", etc.
+)
+```
+
+### Implementation
+
+```python
+from looptrip.normalize import Adapter, Event
+
+class CastDbAdapter(Adapter):
+    def __init__(self, session_id: str, *, rows=None, db_query=None):
+        self._session_id = session_id
+        self._rows = rows
+        self._db_query = db_query
+
+    def events(self) -> Iterator[Event]:
+        """Yield cast.db agent_runs rows as normalized events."""
+        for row in self._ordered_rows():
+            yield Event(
+                agent=row["agent"],
+                tool="dispatch",           # Constant: no per-row tool column
+                args_hash=None,            # No args hash available in schema
+                ts=row["started_at"],
+                handoff_state=None,        # Not available in agent_runs
+                input_tokens=row["input_tokens"],
+                cost_usd=row["cost_usd"],
+                progress=False,            # Never recorded in agent_runs
+                raw_id=row["id"],
+            )
+```
+
+**Key design decisions:**
+
+- `tool="dispatch"` is a constant—every row is a dispatch, and there is no per-action tool distinction in the schema.
+- `args_hash=None` because the table has no args column. Detection relies on `(agent, ts)` repeat + token variance.
+- `handoff_state=None` because the table does not store the `## Handoff` block. The deadlock detector will find no handoff edges and return `[]`.
+- `progress=False` because agent_runs does not record intra-run progress deltas. Status moves (e.g., `DONE` → `DONE_WITH_CONCERNS`) are not captured.
+
+See the full implementation: [`src/looptrip/adapters/cast_db.py`](../src/looptrip/adapters/cast_db.py).
+
+## OpenTelemetry GenAI Spans Adapter (Guidance)
+
+When bridging OTel `gen_ai.request` spans, map as follows:
+
+### Source: OTel GenAI Semantic Conventions
+
+```python
+span = {
+    "attributes": {
+        "service.name": "my-workflow-agent",     # → Event.agent
+        "gen_ai.operation.name": "chat.create",  # → part of Event.tool
+        "gen_ai.request.temperature": 0.7,       # → part of Event.args_hash
+        "gen_ai.usage.input_tokens": 1024,       # → Event.input_tokens
+    },
+    "span_id": "abc123def456",                   # → Event.raw_id
+    "start_time": "2026-06-21T14:30:00Z",        # → Event.ts
+}
+```
+
+### Mapping Strategy
+
+```python
+from looptrip.normalize import Adapter, Event, args_hash_from
+
+class OTelAdapter(Adapter):
+    def __init__(self, traces):
+        self.traces = traces
+
+    def events(self) -> Iterator[Event]:
+        for span in self._sorted_spans():
+            attrs = span["attributes"]
+            
+            # Construct a stable tool/args hash from operation + relevant parameters.
+            operation = attrs.get("gen_ai.operation.name", "unknown")
+            model = attrs.get("gen_ai.request.model", "")
+            temperature = attrs.get("gen_ai.request.temperature", "")
+            
+            tool = f"otel/{operation}"
+            args_parts = [model, str(temperature)]
+            args_hash = args_hash_from(*args_parts) if all(args_parts) else None
+            
+            # Extract handoff state if your span metadata includes it.
+            handoff_state = self._extract_handoff_state(span)
+            
+            yield Event(
+                agent=attrs.get("service.name", "unknown"),
+                tool=tool,
+                args_hash=args_hash,
+                ts=span["start_time"],
+                handoff_state=handoff_state,
+                input_tokens=attrs.get("gen_ai.usage.input_tokens"),
+                cost_usd=self._compute_cost(attrs),
+                progress=self._infer_progress(span),
+                raw_id=span["span_id"],
+            )
+```
+
+**Notes:**
+
+- Use `args_hash_from()` to deterministically hash operation name, model, and other action parameters—**order matters**.
+- Set `handoff_state` if your spans or traces include agent status/state information (e.g., via `gen_ai.agent.status` or a custom attribute). Leave `None` if unavailable.
+- Infer `progress` from span attributes (e.g., span did not error, or a custom `succeeded` flag).
+
+## Generic JSONL Adapter (Guidance)
+
+For unstructured logs or simple JSON Line files:
+
+```python
+from looptrip.normalize import Adapter, Event, args_hash_from
+import json
+
+class JSONLAdapter(Adapter):
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+
+    def events(self) -> Iterator[Event]:
+        lines = []
+        with open(self.file_path, "r") as f:
+            for line in f:
+                if line.strip():
+                    lines.append(json.loads(line))
+        
+        # Sort by timestamp before yielding.
+        sorted_lines = sorted(lines, key=lambda x: x.get("timestamp", ""))
+        
+        for record in sorted_lines:
+            # Map your JSONL fields to Event fields.
+            # Example: { "agent": "...", "action": "...", "args": {...}, "ts": "...", ... }
+            
+            args_hash = None
+            if "args" in record and record["args"]:
+                args_hash = args_hash_from(*[str(v) for v in record["args"].values()])
+            
+            yield Event(
+                agent=record["agent"],
+                tool=record.get("action", "unknown"),
+                args_hash=args_hash,
+                ts=record["timestamp"],
+                handoff_state=record.get("state"),
+                input_tokens=record.get("tokens"),
+                cost_usd=record.get("cost"),
+                progress=record.get("progress", False),
+                raw_id=record.get("id"),
+            )
+```
+
+**Key points:**
+
+- Always sort by `ts` before yielding, to satisfy the non-decreasing ordering constraint.
+- Map your `action` or `operation` field to `tool`; use a namespace prefix if needed (e.g., `"jsonl/my-action"`).
+- For `args_hash`, collect action-specific parameters into a stable tuple and pass to `args_hash_from()`. If args are complex objects, serialize them (e.g., `json.dumps(..., sort_keys=True)`) before hashing.
+- `handoff_state` is optional enrichment; set it if your logs capture agent state transitions.
+
+## Complete Runnable Example
+
+Here is a minimal custom adapter that yields three events, then detects a duplicate-work pathology:
+
+```python
+from looptrip.normalize import Adapter, Event
+from looptrip.detector import detect
+
+class SimpleAdapter(Adapter):
+    def events(self):
+        # Three identical events (same signature) with no progress delta.
+        # The second is the duplicate-work trip; the third is prevented.
+        yield Event(
+            agent="test-agent",
+            tool="process",
+            args_hash=None,
+            ts="2026-06-21T10:00:00Z",
+            input_tokens=100,
+            cost_usd=0.01,
+            progress=False,
+            raw_id=1,
+        )
+        yield Event(
+            agent="test-agent",
+            tool="process",
+            args_hash=None,
+            ts="2026-06-21T10:01:00Z",
+            input_tokens=101,  # Within 5% token tolerance
+            cost_usd=0.01,
+            progress=False,
+            raw_id=2,
+        )
+        yield Event(
+            agent="test-agent",
+            tool="process",
+            args_hash=None,
+            ts="2026-06-21T10:02:00Z",
+            input_tokens=102,  # Within 5% token tolerance
+            cost_usd=0.01,
+            progress=False,
+            raw_id=3,
+        )
+
+adapter = SimpleAdapter()
+reports = detect(adapter.events())
+
+for report in reports:
+    print(f"Detected: {report.kind}")
+    print(f"  Agent: {report.agent}")
+    print(f"  Occurrences: {report.occurrences}")
+    print(f"  Trip at: occurrence #{report.trip_index}")
+    print(f"  Prevented cost: ${report.prevented_cost:.2f}")
+    print(f"  Detail: {report.detail}")
+
+print(f"\nTotal reports: {len(reports)}")
+```
+
+### Running the Example
+
+Save the above code and run it via the looptrip venv:
+
+```bash
+python /path/to/example.py
+```
+
+Actual output:
+
+```
+Detected: duplicate_work
+  Agent: test-agent
+  Occurrences: 3
+  Trip at: occurrence #2
+  Prevented cost: $0.01
+  Detail: 'test-agent' repeated signature ('test-agent', 'process', None) with no progress delta: 3 same-agent dispatches; tripped at occurrence 2 (within 5% input-token variance of the preceding dispatch); 1 subsequent dispatch(es) worth $0.01 would have been averted (raw_id=2).
+
+Total reports: 1
+```
+
+## Integration with detect()
+
+Once you have an adapter, feed it into `detect()` or `detect_all()`:
+
+```python
+from looptrip.detector import detect, detect_all
+
+adapter = MyAdapter(...)
+reports = detect(adapter.events())
+
+# Or with all four detectors:
+reports = detect_all(adapter.events())
+
+# Or with custom sensitivity:
+reports = detect(
+    adapter.events(),
+    token_tolerance=0.10,
+    threshold=3,
+    idempotent_agents={"background-worker"},
+)
+```
+
+See [architecture.md](architecture.md) for the detector taxonomy and [usage.md](usage.md) for CLI-level scanning.
+
+## Summary Checklist
+
+When authoring an adapter:
+
+- [ ] Implement `events() -> Iterator[Event]` with **strictly non-decreasing `ts`**.
+- [ ] Populate `agent`, `tool`, `args_hash`, and `ts` (load-bearing fields).
+- [ ] When `args_hash` is unavailable, set it to `None` and rely on token-variance detection.
+- [ ] Populate `input_tokens` and `cost_usd` if available (critical for cost reporting).
+- [ ] Populate `handoff_state` only if your source captures agent state; leave `None` for STATUS_CONTRACT_EXEMPT agents.
+- [ ] Set `progress=True` only when the event explicitly marks a state delta in your source.
+- [ ] Return `raw_id` for forensic traceability.
+- [ ] Test your adapter by feeding `adapter.events()` into `detect()` and verifying the output matches expectations.
