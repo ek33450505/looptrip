@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "looptrip"
+version = "0.1.0"
+description = "Deterministic, framework-agnostic detector of multi-agent coordination pathologies that trips at iteration 2"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov"]
+otel = ["opentelemetry-api", "opentelemetry-sdk", "opentelemetry-semantic-conventions"]
+
+[project.scripts]
+looptrip = "looptrip.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"looptrip" = ["_data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
