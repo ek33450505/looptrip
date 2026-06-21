@@ -21,12 +21,23 @@ token proximity.  A runaway whose first repeat is NOT within token tolerance
 of its predecessor is a known Phase-1 blind spot; Phase 2 adds structural /
 graph-based detection independent of token similarity.
 
-The remaining three CAST pathologies are explicitly **out of scope for Phase 1**
-and will land later as their own detectors:
+**Phase 2 detectors** are now implemented in the :mod:`looptrip.detectors`
+subpackage and are opt-in via :func:`detect` ``detectors=`` parameter or the
+:func:`detect_all` convenience.  The three additional pathologies covered:
 
-* ping-pong / livelock — A→B→A→B with no net state advance,
-* deadlock — mutually-blocked agents, none progressing,
-* never-terminate — unbounded growth with no terminal state.
+* **ping-pong / livelock** (:func:`detect_ping_pong`) — A→B→A→B with no net
+  state advance; detected by counting directed-cycle closures in the temporal
+  agent-visitation sequence, independent of token counts.
+* **deadlock** (:func:`detect_deadlock`) — mutually-blocked agents, each
+  waiting on another, none progressing; detected via a wait-for graph over
+  ``handoff_state`` edges (requires ``handoff_state`` to be non-``None``).
+* **non-termination** (:func:`detect_non_termination`) — unbounded growth with
+  no terminal state; detected by a sliding-window unique-state count plateau,
+  token-independent.
+
+The :func:`detect` default (``detectors=None``) remains **duplicate-work-only**
+for full backward compatibility with Phase-1 callers and tests.  Pass
+``detectors=ALL_DETECTORS`` or call :func:`detect_all` to enable all four.
 
 This module is stdlib-only and holds no global mutable state: every call to
 :func:`detect` / :func:`detect_duplicate_work` builds and discards its own
@@ -39,43 +50,36 @@ from dataclasses import dataclass, field
 from typing import Iterable, List, Optional
 
 from looptrip.normalize import Event
+from looptrip.detectors.types import (
+    PathologyReport,
+    DetectionConfig,
+    KIND_DUPLICATE_WORK,
+    KIND_PING_PONG,
+    KIND_DEADLOCK,
+    KIND_NON_TERMINATION,
+    ALL_DETECTORS,
+    resolve_config,
+)
+from looptrip.detectors.ping_pong import detect_ping_pong
+from looptrip.detectors.deadlock import detect_deadlock
+from looptrip.detectors.non_termination import detect_non_termination
 
-KIND_DUPLICATE_WORK = "duplicate_work"
-
-
-@dataclass(frozen=True, slots=True)
-class PathologyReport:
-    """A single confirmed pathology, anchored at its trip point.
-
-    Attributes:
-        kind:           Pathology family — ``"duplicate_work"`` in Phase 1.
-        signature:      The offending ``(agent, tool, args_hash)`` triple.
-        agent:          The acting agent (``signature[0]``, surfaced for ease).
-        occurrences:    Total events sharing this signature in the stream.
-        trip_index:     1-based ordinal of the occurrence that tripped the
-                        detector (== ``threshold``; 2 by default).
-        trip_event:     The event that tripped the detector (the 2nd occurrence).
-        first_event:    The first occurrence of the signature (the baseline).
-        prevented_cost: Sum of ``cost_usd`` over EVERY same-signature event
-                        strictly AFTER the trip event — the waste a real trip
-                        would have averted.  Model: killing the looping agent
-                        at the trip point averts all of its later dispatches,
-                        regardless of whether they remain within token
-                        tolerance of each other ("kill-the-agent-at-trip").
-        prevented_runs: Count of those post-trip events.
-        detail:         A concise human-readable sentence describing the trip.
-    """
-
-    kind: str
-    signature: tuple
-    agent: str
-    occurrences: int
-    trip_index: int
-    trip_event: Event
-    first_event: Event
-    prevented_cost: float
-    prevented_runs: int
-    detail: str
+__all__ = [
+    "detect",
+    "detect_all",
+    "detect_duplicate_work",
+    "detect_ping_pong",
+    "detect_deadlock",
+    "detect_non_termination",
+    "PathologyReport",
+    "DetectionConfig",
+    "KIND_DUPLICATE_WORK",
+    "KIND_PING_PONG",
+    "KIND_DEADLOCK",
+    "KIND_NON_TERMINATION",
+    "ALL_DETECTORS",
+    "_args_similar",
+]
 
 
 @dataclass(slots=True)
@@ -220,12 +224,115 @@ def detect_duplicate_work(
     return reports
 
 
-def detect(events: Iterable[Event], **knobs) -> List[PathologyReport]:
-    """Run all Phase-1 detectors over ``events``.
+def _run_duplicate_work(
+    events: List[Event],
+    cfg: DetectionConfig,
+) -> List[PathologyReport]:
+    """Adapter that calls :func:`detect_duplicate_work` with the three legacy knobs.
 
-    Phase 1 dispatches solely to :func:`detect_duplicate_work`. Reports are
-    returned sorted by ``prevented_cost`` DESCENDING, so the costliest runaway
-    surfaces first.
+    Extracts only the fields that ``detect_duplicate_work`` accepts
+    (``token_tolerance``, ``threshold``, ``idempotent_agents``) from the
+    unified :class:`DetectionConfig`, ensuring that the new sensitivity knobs
+    (``retry_allowed``, ``allowlist_agents``, etc.) never reach the
+    duplicate-work detector — which keeps its behavior provably byte-identical
+    to its Phase-1 implementation regardless of how the caller configures the
+    broader detection session.
+
+    Args:
+        events:  Pre-materialized event list (already copied by
+                 :func:`detect`; safe to pass directly).
+        cfg:     Resolved :class:`DetectionConfig` for this detection run.
+
+    Returns:
+        The raw (un-sorted) list of :class:`PathologyReport` instances from
+        :func:`detect_duplicate_work`.
     """
-    reports = detect_duplicate_work(events, **knobs)
-    return sorted(reports, key=lambda report: report.prevented_cost, reverse=True)
+    return detect_duplicate_work(
+        events,
+        token_tolerance=cfg.token_tolerance,
+        threshold=cfg.threshold,
+        idempotent_agents=cfg.idempotent_agents,
+    )
+
+
+_REGISTRY: dict = {
+    KIND_DUPLICATE_WORK: _run_duplicate_work,
+    KIND_PING_PONG: lambda evs, cfg: detect_ping_pong(evs, config=cfg),
+    KIND_DEADLOCK: lambda evs, cfg: detect_deadlock(evs, config=cfg),
+    KIND_NON_TERMINATION: lambda evs, cfg: detect_non_termination(evs, config=cfg),
+}
+"""Mapping from each ``KIND_*`` constant to its runner callable.
+
+Each runner has the signature ``(events: List[Event], cfg: DetectionConfig)
+-> List[PathologyReport]``.  The registry is a plain module-level ``dict``
+(not a mutable class attribute) and is never mutated after module load, so it
+holds no global mutable state."""
+
+
+def detect(
+    events: Iterable[Event],
+    *,
+    config: Optional[DetectionConfig] = None,
+    detectors: Optional[Iterable[str]] = None,
+    **knobs,
+) -> List[PathologyReport]:
+    """Run selected detectors over ``events`` and return sorted reports.
+
+    The default (``detectors=None``) runs **duplicate-work only**, preserving
+    full backward compatibility with Phase-1 callers.  Pass
+    ``detectors=ALL_DETECTORS`` or call :func:`detect_all` to enable all four
+    detectors.
+
+    Args:
+        events:    Ordered event stream.  The caller is responsible for
+                   pre-sorting by ``(ts, raw_id)``.  The stream is
+                   materialised once into a list (a reference copy; no
+                   reorder or mutation) so that multi-detector runs can each
+                   iterate the same sequence.
+        config:    Pre-built :class:`DetectionConfig`; ``None`` uses defaults.
+        detectors: Iterable of ``KIND_*`` strings naming which detectors to
+                   run.  ``None`` (the default) selects duplicate-work only.
+                   Order does not matter — the canonical :data:`ALL_DETECTORS`
+                   order is always used when iterating.
+        **knobs:   Ad-hoc overrides forwarded to :func:`resolve_config`
+                   (merged on top of ``config``).  Unknown keys raise
+                   :class:`TypeError`.
+
+    Returns:
+        All reports from every selected detector, sorted by
+        ``prevented_cost`` DESCENDING (costliest runaway first).
+
+    Raises:
+        TypeError: If ``knobs`` contains an unrecognised configuration key.
+    """
+    cfg = resolve_config(config, knobs)
+    selected = (KIND_DUPLICATE_WORK,) if detectors is None else tuple(detectors)
+    materialized = list(events)   # copy WITHOUT reorder/mutate; allows multi-detector iteration
+    reports: List[PathologyReport] = []
+    for kind in ALL_DETECTORS:    # canonical, deterministic order
+        if kind in selected:
+            reports.extend(_REGISTRY[kind](materialized, cfg))
+    return sorted(reports, key=lambda r: r.prevented_cost, reverse=True)
+
+
+def detect_all(
+    events: Iterable[Event],
+    *,
+    config: Optional[DetectionConfig] = None,
+    **knobs,
+) -> List[PathologyReport]:
+    """Run ALL four detectors over ``events`` and return sorted reports.
+
+    Convenience wrapper around :func:`detect` with ``detectors=ALL_DETECTORS``.
+    Equivalent to ``detect(events, config=config, detectors=ALL_DETECTORS, **knobs)``.
+
+    Args:
+        events:  Ordered event stream (pre-sorted by ``(ts, raw_id)``).
+        config:  Pre-built :class:`DetectionConfig`; ``None`` uses defaults.
+        **knobs: Ad-hoc sensitivity overrides (see :func:`detect`).
+
+    Returns:
+        All reports from all four detectors, sorted by ``prevented_cost``
+        DESCENDING.
+    """
+    return detect(events, config=config, detectors=ALL_DETECTORS, **knobs)
