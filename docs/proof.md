@@ -91,6 +91,24 @@ For session da27b414:
 
 The $792.96 is not an assumption that all 54 (or 49) dispatches cost the same. It is the real sum of the actual cost_usd values from the fixture data for the prevented dispatches — the dispatch-level billing data faithfully recorded in cast.db.
 
+## Assumptions & Limitations
+
+The $792.96 is a real, reproducible measurement, but it rests on an explicit counterfactual and a few inferences that honesty requires stating plainly. State them so the number can be judged on its merits:
+
+- **It is a counterfactual, and looptrip is an observer.** $792.96 is what an *external orchestrator gate* acting on looptrip's iteration-2 signal would have averted — dispatches #3..#N never happen if the loop is stopped at dispatch #2. looptrip itself only **detects and reports**; it never blocks or kills an agent. The figure is "spend an upstream gate could have prevented," not "spend looptrip prevented."
+
+- **"No net progress" is inferred, not recorded.** The cast.db `agent_runs` table has no progress column, so the adapter sets `progress=False` for every row. The duplicate-work signal is therefore "the same agent re-dispatched, with no signal of progress between occurrences" — and all 54 / 49 dispatches report `status=DONE`. The data shows a runaway re-dispatch loop; it cannot, by itself, *prove* that zero useful work occurred in any individual dispatch. Calling #3..#N "waste" is the model's interpretation of a same-agent loop with no terminating signal, not a recorded fact per dispatch.
+
+- **The dispatches are not identical.** Input-token counts and per-dispatch costs vary widely across each loop (see the Model section above). Only the *trip pair* (#1↔#2) is gated on ≤5% token proximity. The headline is the **real sum of the actual recorded `cost_usd`** for #3..#N — never an extrapolation from a uniform per-dispatch cost.
+
+- **The count is conservative — it likely understates total detectable waste.** Only the single costliest loop agent (`workflow-subagent`) is counted; the other agents' spend in the same sessions is excluded, and additional smaller duplicate-work signatures detected in both sessions are *not* added to the headline. The figure is the dominant loop alone, not the sum of all pathologies present.
+
+- **Deduplication is by agent identity + token proximity, not argument hashing.** Because `args_hash=None` for cast.db, the `(agent, tool, args_hash)` signature collapses to the agent identity; duplicates are confirmed by the ≤5% token-proximity check, not by hashing and comparing actual call arguments. An OTel adapter that populates `args_hash` would dedup on exact arguments instead.
+
+- **Timestamps are second-granularity.** `started_at` resolves to the second; the first two dispatches in each session share a timestamp, so within-second ordering relies on the monotonic row `id`. Sorting is `(started_at, id)` (oracle) / `(ts, raw_id)` (detector) — equivalent orderings.
+
+- **Scope of the claim.** These are two real runaway sessions from one CAST database, presented to demonstrate that the pathology and the prevented cost are **real and reproducible** — not a population estimate of how often such loops occur or their expected cost across deployments. For unverified third-party figures (e.g. a widely-reported "$47K" agent-loop bill), see [framing.md](framing.md); we label those as unverified and do not anchor on them.
+
 ## Independent Re-Derivation: The Number is Computed, Not Asserted
 
 A headline number is only trustworthy if it survives two independent derivations. The $792.96 is verified in two ways:
