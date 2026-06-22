@@ -24,7 +24,7 @@ pip install -e ".[otel]"
 
 ## Command-line Interface
 
-The `looptrip` command (installed via setuptools console script) uses stdlib argparse. Three entry points:
+The `looptrip` command (installed via setuptools console script) uses stdlib argparse. Four entry points:
 
 ### `looptrip --version`
 
@@ -62,14 +62,23 @@ This command is exercised in CI on every push ([`.github/workflows/test.yml`](..
 
 ### `looptrip scan <source>`
 
-Scan an event stream for duplicate-work pathologies. The default detector (used by CLI) is `duplicate_work`; the three Phase-2 detectors are library-only (see [Library API](#library-api)).
+Scan an event stream for pathologies. By default, runs the `duplicate_work` detector (Phase 1). Use `--all` or `--detectors LIST` to run multiple detectors (Phase 2+).
 
 #### Source formats
 
 - **`fixture:<session_id>`** — Load a session from the packaged hermetic fixture (no database required).
 - **`cast-db:<session_id>`** — Query a live `cast.db` (requires the real CAST database).
 
-#### Example: scan from fixture
+#### Flags
+
+- **`--all`** — Run all four detectors (duplicate_work, ping_pong, deadlock, non_termination). Output table gains a leading `kind` column. Empty message: "no pathologies detected in <source>". Mutually exclusive with `--detectors`.
+- **`--detectors LIST`** — Run a comma-separated subset of detectors. Valid names: `duplicate_work`, `ping_pong`, `deadlock`, `non_termination`. Example: `--detectors duplicate_work,ping_pong`. Output gains a leading `kind` column. Unknown detector name → exit 2 with stderr error message. Mutually exclusive with `--all`.
+
+Default (no flags): runs `duplicate_work` only; output shows agent / occurrences / prevented_runs / prevented_cost columns. Empty message: "no duplicate-work pathologies detected in <source>".
+
+**Note on `deadlock`:** The deadlock detector requires `handoff_state` (blocked-state tokens) in events. On the packaged fixture, deadlock yields no results because the fixture lacks this metadata; it is not a bug.
+
+#### Example: scan from fixture (default detector)
 
 ```bash
 $ looptrip scan fixture:2e6c0288-b8db-46de-8ec4-164e3685a739
@@ -82,6 +91,20 @@ commit                             20              11           $0.91
 
 Exit code: **0** (clean scan, including no pathologies found)
 
+#### Example: scan with all detectors
+
+```bash
+$ looptrip scan --all fixture:2e6c0288-b8db-46de-8ec4-164e3685a739
+kind                  agent                     occurrences  prevented_runs  prevented_cost
+-------------------------------------------------------------------------------------------
+non_termination       test-writer                       113              93         $351.40
+duplicate_work        workflow-subagent                  54              52         $320.16
+ping_pong             bash-specialist                     3              30           $5.86
+duplicate_work        bash-specialist                    14              12           $5.41
+```
+
+Exit code: **0**
+
 #### Example: malformed source
 
 ```bash
@@ -91,12 +114,42 @@ error: malformed source 'bad_source'; expected 'fixture:<id>' or 'cast-db:<id>'
 
 Exit code: **2** (error written to stderr)
 
+### `looptrip attribute <source>`
+
+Attribute pathologies to decisive handoffs using counterfactual-replay analysis. Runs the selected detector(s) (default: `duplicate_work` only), then neutralizes each event in turn and re-runs the detector. An event is marked "decisive" if the pathology vanishes without it.
+
+Verdicts summarize the attribution result:
+- **`unique`** — Exactly one decisive handoff was found.
+- **`multiple`** — Two or more independently decisive handoffs were found.
+- **`overdetermined`** — No single decisive handoff exists; the pathology recurs even when any one handoff is neutralized. The loop is caused by repeated structure, not a single event.
+
+#### Source formats and flags
+
+Same as `looptrip scan` — `fixture:<session_id>` or `cast-db:<session_id>`, plus optional `--all` or `--detectors LIST` (mutually exclusive, same rules as scan).
+
+#### Example: attribute with default detector
+
+```bash
+$ looptrip attribute fixture:2e6c0288-b8db-46de-8ec4-164e3685a739
+kind                  agent                            verdict  decisive  tested
+--------------------------------------------------------------------------------
+duplicate_work        workflow-subagent         overdetermined         0     113
+duplicate_work        bash-specialist           overdetermined         0     113
+duplicate_work        commit                          multiple         2     113
+
+No single decisive handoff: the duplicate_work pathology ('workflow-subagent', 'dispatch', None) survives neutralizing any one of 113 handoffs — it remains tripped (overdetermined; caused by the repeated structure, not a single handoff).
+```
+
+Exit code: **0** (clean attribution, including no pathologies to attribute)
+
+**Honest framing:** The headline runaway (workflow-subagent) is **overdetermined** — no single handoff caused it. This is the correct, intended result and validates the "trip the loop at iteration 2, don't blame one handoff" observer thesis.
+
 ### Exit codes
 
 | Code | Condition |
 |------|-----------|
-| 0    | Success (`--version`, `proof`, clean scan even with no pathologies) |
-| 2    | Malformed/unknown source or import failure |
+| 0    | Success (`--version`, `proof`, clean scan, clean attribution, or no pathologies found) |
+| 2    | Malformed/unknown source, unknown detector name, or import failure |
 
 ## Library API
 
@@ -235,11 +288,9 @@ adapter = CastDbAdapter(session_id)
 events = adapter.events()
 ```
 
-## Limitation: CLI coverage vs. library
+## CLI coverage
 
-The `looptrip scan` command runs **only the Phase-1 duplicate-work detector**. The three Phase-2 detectors (ping-pong, deadlock, non-termination) are reachable only via the library API using `detect_all()` or `detect(..., detectors=[...])`.
-
-**Planned enhancement:** A future release will add a `--detectors` flag to expose all four detectors from the CLI.
+The CLI exposes all four detectors via `scan --all` and `scan --detectors LIST`, and counterfactual-replay attribution via `looptrip attribute`. Fine-grained `DetectionConfig` tuning and per-detector functions (e.g. `detect_duplicate_work()`, `detect_ping_pong()`) remain library-only.
 
 ## Architecture and internals
 
