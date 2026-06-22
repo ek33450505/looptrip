@@ -30,11 +30,11 @@ each event contributes its ``agent`` as a node; consecutive duplicate agents are
 collapsed (self-loop suppression).
 
 Optional (``use_handoff_edges=True``): for each event, after recording the
-event's own agent node, an explicit hop to the parsed handoff target is inserted
-if ``_parse_target(event.handoff_state)`` names a known agent.  This extends
-the temporal graph with any explicit agent-routing information present in
-``handoff_state``.  Falls back to the temporal edge when no parseable known
-target is found.
+event's own agent node, an explicit hop to ``event.to_agent`` is inserted if
+that field names a known agent.  This extends the temporal graph with the
+explicit agent-routing information carried in ``to_agent`` (read directly — no
+delimiter scanning).  Falls back to the temporal edge when ``to_agent`` is
+absent or names an unknown agent.
 
 This module is stdlib-only and defines no global mutable state.  Every call
 builds and discards its own local bookkeeping tables.
@@ -67,7 +67,6 @@ from looptrip.detectors._shared import (
     _canonical_cycle,
     _is_progress,
     _is_terminal,
-    _parse_target,
 )
 
 
@@ -174,7 +173,7 @@ def detect_ping_pong(
         node_seq: List[tuple] = []
         for i, e in enumerate(ev_list):
             node_seq.append((e.agent, e, i))
-            t = _parse_target(e.handoff_state)
+            t = e.to_agent
             if t is not None and t in known_agents:
                 # Explicit directed hop from e.agent to t; insert t as an
                 # additional node before the next temporal event.

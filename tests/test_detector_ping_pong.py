@@ -27,6 +27,7 @@ def _dispatch(
     cost_usd: float = 10.0,
     progress: bool = False,
     handoff_state: str | None = None,
+    to_agent: str | None = None,
     ts: str | None = None,
 ) -> Event:
     """Build a normalized Event for testing."""
@@ -39,6 +40,7 @@ def _dispatch(
         cost_usd=cost_usd,
         progress=progress,
         handoff_state=handoff_state,
+        to_agent=to_agent,
         raw_id=raw_id,
     )
 
@@ -328,11 +330,11 @@ def test_ping_pong_works_with_handoff_state_none():
 def test_use_handoff_edges_inserts_synthetic_hop_to_known_agent():
     """When use_handoff_edges=True, synthetic hop targets are added after events."""
     events = [
-        _dispatch(1, agent="A", handoff_state="dispatching to B"),
-        _dispatch(2, agent="B", handoff_state="dispatching to A"),
-        _dispatch(3, agent="A", handoff_state="dispatching to B"),
-        _dispatch(4, agent="B", handoff_state="dispatching to A"),
-        _dispatch(5, agent="A", handoff_state="dispatching to B"),
+        _dispatch(1, agent="A", handoff_state="dispatching", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="dispatching", to_agent="A"),
+        _dispatch(3, agent="A", handoff_state="dispatching", to_agent="B"),
+        _dispatch(4, agent="B", handoff_state="dispatching", to_agent="A"),
+        _dispatch(5, agent="A", handoff_state="dispatching", to_agent="B"),
     ]
     # With use_handoff_edges=True: A+(synthetic B), B+(synthetic A), A+(synthetic B), B+(synthetic A), A+(synthetic B)
     # Node sequence: A,B,B,A,A,B,B,A,A,B → collapses to A,B,A,B,A,B (self-loop collapse)
@@ -344,14 +346,15 @@ def test_use_handoff_edges_inserts_synthetic_hop_to_known_agent():
 
 
 def test_use_handoff_edges_false_ignores_targets_uses_temporal():
-    """When use_handoff_edges=False (default), only temporal order matters."""
+    """When use_handoff_edges=False (default), to_agent is ignored: temporal order only."""
     events = [
-        _dispatch(1, agent="A", handoff_state="dispatching to B"),
-        _dispatch(2, agent="B", handoff_state="dispatching to A"),
+        _dispatch(1, agent="A", handoff_state="dispatching", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="dispatching", to_agent="A"),
         _dispatch(3, agent="C", handoff_state="none"),
-        _dispatch(4, agent="A", handoff_state="dispatching to B"),
+        _dispatch(4, agent="A", handoff_state="dispatching", to_agent="B"),
     ]
-    # Temporal: A,B,C,A; no full cycle of length >= 2 that repeats
+    # Temporal: A,B,C,A; the explicit to_agent targets are IGNORED in this mode,
+    # so no synthetic hop edges are inserted; no full cycle of length >= 2 repeats.
     reports = detect_ping_pong(events, use_handoff_edges=False)
     # A closes at index 0, so we have (A,B,C), closure 1; then A repeats at (A)
     # next event would be needed to form closure 2

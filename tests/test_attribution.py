@@ -29,6 +29,7 @@ def ev(
     tokens: int = 100,
     cost: float = 1.0,
     hs: str | None = None,
+    to_agent: str | None = None,
     progress: bool = False,
 ) -> Event:
     """Helper to build test events (minimal cast.db style)."""
@@ -38,6 +39,7 @@ def ev(
         args_hash=None,
         ts=f"2024-01-01T00:00:{raw_id:02d}Z",
         handoff_state=hs,
+        to_agent=to_agent,
         input_tokens=tokens,
         cost_usd=cost,
         progress=progress,
@@ -59,9 +61,9 @@ def test_deadlock_asymmetry_yields_unique_verdict():
     deadlock; removing either A→B wait is insufficient (both needed).
     """
     stream = [
-        ev("A", 0, hs="BLOCKED on B"),
-        ev("A", 1, hs="BLOCKED on B"),
-        ev("B", 2, hs="BLOCKED on A"),
+        ev("A", 0, hs="BLOCKED", to_agent="B"),
+        ev("A", 1, hs="BLOCKED", to_agent="B"),
+        ev("B", 2, hs="BLOCKED", to_agent="A"),
     ]
     rep = detect(stream, detectors=(KIND_DEADLOCK,))[0]
     assert rep.kind == KIND_DEADLOCK
@@ -80,9 +82,9 @@ def test_deadlock_asymmetry_yields_unique_verdict():
 def test_deadlock_asymmetry_decisive_tuple_in_stream_order():
     """Decisive events are returned in stream order."""
     stream = [
-        ev("A", 0, hs="BLOCKED on B"),
-        ev("A", 1, hs="BLOCKED on B"),
-        ev("B", 2, hs="BLOCKED on A"),
+        ev("A", 0, hs="BLOCKED", to_agent="B"),
+        ev("A", 1, hs="BLOCKED", to_agent="B"),
+        ev("B", 2, hs="BLOCKED", to_agent="A"),
     ]
     rep = detect(stream, detectors=(KIND_DEADLOCK,))[0]
     res = attribute(stream, rep)
@@ -222,8 +224,8 @@ def test_duplicate_work_two_identical_events_multiple():
 def test_symmetric_deadlock_both_events_decisive():
     """Symmetric deadlock: A→B, B→A. Both waits are equally decisive."""
     stream = [
-        ev("A", 0, hs="BLOCKED on B"),
-        ev("B", 1, hs="BLOCKED on A"),
+        ev("A", 0, hs="BLOCKED", to_agent="B"),
+        ev("B", 1, hs="BLOCKED", to_agent="A"),
     ]
     rep = detect(stream, detectors=(KIND_DEADLOCK,))[0]
     assert rep.kind == KIND_DEADLOCK
@@ -571,9 +573,9 @@ def test_attribute_result_is_frozen():
 def test_is_decisive_true_when_verdict_unique():
     """is_decisive is True iff verdict == 'unique'."""
     stream = [
-        ev("A", 0, hs="BLOCKED on B"),
-        ev("A", 1, hs="BLOCKED on B"),
-        ev("B", 2, hs="BLOCKED on A"),
+        ev("A", 0, hs="BLOCKED", to_agent="B"),
+        ev("A", 1, hs="BLOCKED", to_agent="B"),
+        ev("B", 2, hs="BLOCKED", to_agent="A"),
     ]
     rep = detect(stream, detectors=(KIND_DEADLOCK,))[0]
 
@@ -623,9 +625,9 @@ def test_is_decisive_false_when_verdict_multiple():
 def test_unique_detail_string_mentions_raw_id_and_count():
     """Unique verdict detail mentions the raw_id and tested count."""
     stream = [
-        ev("A", 0, hs="BLOCKED on B"),
-        ev("A", 1, hs="BLOCKED on B"),
-        ev("B", 2, hs="BLOCKED on A"),
+        ev("A", 0, hs="BLOCKED", to_agent="B"),
+        ev("A", 1, hs="BLOCKED", to_agent="B"),
+        ev("B", 2, hs="BLOCKED", to_agent="A"),
     ]
     rep = detect(stream, detectors=(KIND_DEADLOCK,))[0]
 

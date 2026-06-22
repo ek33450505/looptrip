@@ -13,13 +13,11 @@ from dataclasses import FrozenInstanceError
 
 from looptrip.detector import DetectionConfig, resolve_config
 from looptrip.detectors._shared import (
-    BlockedWait,
     _canonical_cycle,
+    _is_blocked,
     _is_exempt,
     _is_progress,
     _is_terminal,
-    _parse_blocked,
-    _parse_target,
     _state_key,
 )
 from looptrip.normalize import Event
@@ -480,241 +478,80 @@ def test_canonical_cycle_returns_tuple():
 
 
 # ---------------------------------------------------------------------------
-# _parse_target
+# _is_blocked — bare-token blocked-state predicate (explicit-to_agent contract)
 # ---------------------------------------------------------------------------
+# Under the explicit-to_agent contract, handoff_state carries ONLY the bare
+# state token; the wait-for target lives in event.to_agent.  _is_blocked does
+# NO delimiter scanning — it is a case-insensitive membership predicate.
 
 
-def test_parse_target_colon_delimiter():
-    """_parse_target extracts text after ':' delimiter."""
-    result = _parse_target("BLOCKED: agent-x")
-    assert result == "agent-x"
-
-
-def test_parse_target_equals_delimiter():
-    """_parse_target extracts text after '=' delimiter."""
-    result = _parse_target("waiting=orchestrator")
-    assert result == "orchestrator"
-
-
-def test_parse_target_on_delimiter():
-    """_parse_target extracts text after ' on ' delimiter."""
-    result = _parse_target("blocked on code-writer")
-    assert result == "code-writer"
-
-
-def test_parse_target_to_delimiter():
-    """_parse_target extracts text after ' to ' delimiter."""
-    result = _parse_target("waiting to commit-agent")
-    assert result == "commit-agent"
-
-
-def test_parse_target_no_delimiter():
-    """_parse_target returns None when no delimiter is present."""
-    result = _parse_target("BLOCKED")
-    assert result is None
-
-
-def test_parse_target_none_input():
-    """_parse_target returns None when handoff_state is None."""
-    result = _parse_target(None)
-    assert result is None
-
-
-def test_parse_target_empty_string():
-    """_parse_target returns None when handoff_state is empty."""
-    result = _parse_target("")
-    assert result is None
-
-
-def test_parse_target_earliest_delimiter_wins():
-    """_parse_target uses the earliest delimiter position."""
-    # If a string contains both ":" and "=" but ":" comes first, use ":".
-    result = _parse_target("blocked: x=y")
-    assert result == "x=y"
-
-
-def test_parse_target_agent_with_hyphens():
-    """_parse_target preserves hyphens in agent names."""
-    result = _parse_target("blocked on code-reviewer-agent-x")
-    assert result == "code-reviewer-agent-x"
-
-
-def test_parse_target_whitespace_stripped():
-    """_parse_target strips leading/trailing whitespace from the target."""
-    result = _parse_target("blocked on  agent-x  ")
-    assert result == "agent-x"
-
-
-def test_parse_target_empty_after_delimiter():
-    """_parse_target returns None when only whitespace follows delimiter."""
-    result = _parse_target("blocked:   ")
-    assert result is None
-
-
-# ---------------------------------------------------------------------------
-# _parse_blocked
-# ---------------------------------------------------------------------------
-
-
-def test_parse_blocked_blocked_state_colon():
-    """_parse_blocked returns BlockedWait with target when 'blocked:' matched."""
+def test_is_blocked_default_blocked_token():
+    """_is_blocked returns True for the default 'blocked' token."""
     cfg = DetectionConfig()
-    result = _parse_blocked("blocked on code-writer", cfg)
-    assert result == BlockedWait(target="code-writer")
+    assert _is_blocked("blocked", cfg) is True
 
 
-def test_parse_blocked_blocked_uppercase():
-    """_parse_blocked matches 'BLOCKED' case-insensitively."""
+def test_is_blocked_default_waiting_token():
+    """_is_blocked returns True for the default 'waiting' token."""
     cfg = DetectionConfig()
-    result = _parse_blocked("BLOCKED: agent-x", cfg)
-    assert result == BlockedWait(target="agent-x")
+    assert _is_blocked("waiting", cfg) is True
 
 
-def test_parse_blocked_waiting_state():
-    """_parse_blocked recognizes 'waiting' (default blocked_states)."""
+def test_is_blocked_non_blocked_token():
+    """_is_blocked returns False for a token not in blocked_states (e.g. 'DONE')."""
     cfg = DetectionConfig()
-    result = _parse_blocked("waiting=target", cfg)
-    assert result == BlockedWait(target="target")
+    assert _is_blocked("DONE", cfg) is False
 
 
-def test_parse_blocked_waiting_uppercase():
-    """_parse_blocked matches 'WAITING' case-insensitively."""
+def test_is_blocked_none_input():
+    """_is_blocked returns False when handoff_state is None."""
     cfg = DetectionConfig()
-    result = _parse_blocked("WAITING to someone", cfg)
-    assert result == BlockedWait(target="someone")
+    assert _is_blocked(None, cfg) is False
 
 
-def test_parse_blocked_no_target():
-    """_parse_blocked returns BlockedWait(target=None) when no target present."""
+def test_is_blocked_empty_string():
+    """_is_blocked returns False when handoff_state is empty."""
     cfg = DetectionConfig()
-    result = _parse_blocked("BLOCKED", cfg)
-    assert result == BlockedWait(target=None)
+    assert _is_blocked("", cfg) is False
 
 
-def test_parse_blocked_not_blocked_state():
-    """_parse_blocked returns None when leading word is not in blocked_states."""
+def test_is_blocked_case_insensitive_uppercase_input():
+    """_is_blocked matches 'BLOCKED' against the default lowercase blocked_states."""
     cfg = DetectionConfig()
-    result = _parse_blocked("DONE", cfg)
-    assert result is None
+    assert _is_blocked("BLOCKED", cfg) is True
 
 
-def test_parse_blocked_none_input():
-    """_parse_blocked returns None when handoff_state is None."""
+def test_is_blocked_case_insensitive_mixed_case_input():
+    """_is_blocked matches 'Blocked' (mixed case) case-insensitively."""
     cfg = DetectionConfig()
-    result = _parse_blocked(None, cfg)
-    assert result is None
+    assert _is_blocked("Blocked", cfg) is True
 
 
-def test_parse_blocked_empty_string():
-    """_parse_blocked returns None when handoff_state is empty."""
+def test_is_blocked_strips_whitespace():
+    """_is_blocked strips surrounding whitespace before membership testing."""
     cfg = DetectionConfig()
-    result = _parse_blocked("", cfg)
-    assert result is None
+    assert _is_blocked("  blocked  ", cfg) is True
 
 
-def test_parse_blocked_custom_blocked_states():
-    """_parse_blocked respects custom blocked_states in config."""
+def test_is_blocked_custom_blocked_states_membership():
+    """_is_blocked respects custom blocked_states membership."""
     cfg = DetectionConfig(blocked_states=frozenset({"stuck", "halted"}))
-    result = _parse_blocked("stuck: agent-y", cfg)
-    assert result == BlockedWait(target="agent-y")
+    assert _is_blocked("stuck", cfg) is True
+    assert _is_blocked("halted", cfg) is True
+    assert _is_blocked("blocked", cfg) is False
 
 
-def test_parse_blocked_custom_blocked_states_case_insensitive():
-    """_parse_blocked matches custom blocked_states case-insensitively."""
-    cfg = DetectionConfig(blocked_states=frozenset({"stuck"}))
-    result = _parse_blocked("STUCK: agent", cfg)
-    assert result == BlockedWait(target="agent")
+def test_is_blocked_custom_blocked_states_case_insensitive():
+    """_is_blocked matches custom blocked_states case-insensitively on both sides."""
+    cfg = DetectionConfig(blocked_states=frozenset({"STALLED"}))
+    # Lowercase input matches an uppercase configured state.
+    assert _is_blocked("stalled", cfg) is True
+    # And vice versa.
+    cfg_lower = DetectionConfig(blocked_states=frozenset({"stalled"}))
+    assert _is_blocked("STALLED", cfg_lower) is True
 
 
-def test_parse_blocked_not_in_custom_states():
-    """_parse_blocked returns None when leading word not in custom blocked_states."""
-    cfg = DetectionConfig(blocked_states=frozenset({"stuck"}))
-    result = _parse_blocked("blocked: agent", cfg)
-    assert result is None
-
-
-def test_parse_blocked_malformed_no_crash():
-    """_parse_blocked handles malformed input without crashing."""
-    cfg = DetectionConfig()
-    # These should not raise; they should return None or a valid BlockedWait.
-    assert _parse_blocked("   ", cfg) is None
-    assert _parse_blocked(":", cfg) is None or isinstance(_parse_blocked(":", cfg), BlockedWait)
-
-
-def test_parse_blocked_mixed_case_default_states():
-    """_parse_blocked matches 'Blocked' with default states (case-insensitive)."""
-    cfg = DetectionConfig()
-    result = _parse_blocked("Blocked on target", cfg)
-    assert result == BlockedWait(target="target")
-
-
-# ---------------------------------------------------------------------------
-# CASE-INSENSITIVE DELIMITER SCANNING (regression for the " ON "/" TO " bug)
-# ---------------------------------------------------------------------------
-# Previously, _parse_target and _parse_blocked used handoff_state.find(delim)
-# which is CASE-SENSITIVE.  The bug: "BLOCKED ON x" found no " on " delimiter,
-# so the leading-word fallback grabbed the WHOLE string ("blocked on x"),
-# failing the blocked_states membership check and silently dropping the event.
-
-
-def test_parse_target_uppercase_on_delimiter():
-    """_parse_target handles uppercase ' ON ' delimiter correctly."""
-    result = _parse_target("BLOCKED ON code-writer")
-    assert result == "code-writer"
-
-
-def test_parse_target_mixed_case_on_delimiter():
-    """_parse_target handles mixed-case ' On ' delimiter correctly."""
-    result = _parse_target("Blocked On code-writer")
-    assert result == "code-writer"
-
-
-def test_parse_target_uppercase_to_delimiter():
-    """_parse_target handles uppercase ' TO ' delimiter correctly."""
-    result = _parse_target("WAITING TO finish-agent")
-    assert result == "finish-agent"
-
-
-def test_parse_target_mixed_case_to_delimiter():
-    """_parse_target handles mixed-case ' To ' delimiter correctly."""
-    result = _parse_target("Waiting To finish-agent")
-    assert result == "finish-agent"
-
-
-def test_parse_target_preserves_original_case_of_target():
-    """_parse_target preserves original casing of the returned agent name.
-
-    The delimiter scan is case-insensitive, but the text AFTER the delimiter
-    must be returned exactly as provided — agent names are case-sensitive
-    identifiers that must match the event stream.
-    """
-    result = _parse_target("BLOCKED ON Code-Writer")
-    assert result == "Code-Writer"
-
-
-def test_parse_blocked_uppercase_on_delimiter():
-    """_parse_blocked handles 'BLOCKED ON x' (the primary regression case)."""
-    cfg = DetectionConfig()
-    result = _parse_blocked("BLOCKED ON code-writer", cfg)
-    assert result == BlockedWait(target="code-writer")
-
-
-def test_parse_blocked_mixed_case_on_delimiter():
-    """_parse_blocked handles 'Blocked On x' (mixed-case delimiter)."""
-    cfg = DetectionConfig()
-    result = _parse_blocked("Blocked On code-writer", cfg)
-    assert result == BlockedWait(target="code-writer")
-
-
-def test_parse_blocked_uppercase_to_delimiter():
-    """_parse_blocked handles 'WAITING TO x' (uppercase TO)."""
-    cfg = DetectionConfig()
-    result = _parse_blocked("WAITING TO finish-agent", cfg)
-    assert result == BlockedWait(target="finish-agent")
-
-
-def test_parse_blocked_preserves_target_case():
-    """_parse_blocked returns the target with its original casing intact."""
-    cfg = DetectionConfig()
-    result = _parse_blocked("BLOCKED ON Code-Writer", cfg)
-    assert result == BlockedWait(target="Code-Writer")
+def test_is_blocked_empty_blocked_states():
+    """_is_blocked returns False when blocked_states is empty."""
+    cfg = DetectionConfig(blocked_states=frozenset())
+    assert _is_blocked("blocked", cfg) is False

@@ -26,6 +26,7 @@ def _dispatch(
     args_hash: str | None = None,
     ts: str | None = None,
     handoff_state: str | None = None,
+    to_agent: str | None = None,
     cost_usd: float = 10.0,
 ) -> Event:
     """Build a dispatch Event with configurable handoff_state for deadlock tests."""
@@ -35,6 +36,7 @@ def _dispatch(
         args_hash=args_hash,
         ts=ts or f"2026-06-21T00:00:{raw_id:02d}Z",
         handoff_state=handoff_state,
+        to_agent=to_agent,
         cost_usd=cost_usd,
         raw_id=raw_id,
     )
@@ -48,8 +50,8 @@ def _dispatch(
 def test_two_cycle_deadlock_happy_path():
     """A blocked on B, B blocked on A → one deadlock report."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked on A"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="A"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
@@ -68,9 +70,9 @@ def test_two_cycle_deadlock_happy_path():
 def test_three_cycle_deadlock():
     """A→B→C→A all blocked → one deadlock report with sorted members."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked on C"),
-        _dispatch(3, agent="C", handoff_state="blocked on A"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="C"),
+        _dispatch(3, agent="C", handoff_state="blocked", to_agent="A"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
@@ -88,9 +90,9 @@ def test_three_cycle_deadlock():
 def test_trip_event_is_latest_blocked_with_max_ts():
     """trip_event is the member's latest blocked event with maximum ts."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B", ts="2026-06-21T00:00:01Z"),
-        _dispatch(2, agent="B", handoff_state="blocked on A", ts="2026-06-21T00:00:05Z"),
-        _dispatch(3, agent="A", handoff_state="blocked on B", ts="2026-06-21T00:00:10Z"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B", ts="2026-06-21T00:00:01Z"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="A", ts="2026-06-21T00:00:05Z"),
+        _dispatch(3, agent="A", handoff_state="blocked", to_agent="B", ts="2026-06-21T00:00:10Z"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
@@ -102,8 +104,8 @@ def test_trip_event_is_latest_blocked_with_max_ts():
 def test_first_event_is_min_ts_across_members():
     """first_event is the earliest timestamp among all cycle members' latest events."""
     events = [
-        _dispatch(1, agent="B", handoff_state="blocked on A", ts="2026-06-21T00:00:02Z"),
-        _dispatch(2, agent="A", handoff_state="blocked on B", ts="2026-06-21T00:00:10Z"),
+        _dispatch(1, agent="B", handoff_state="blocked", to_agent="A", ts="2026-06-21T00:00:02Z"),
+        _dispatch(2, agent="A", handoff_state="blocked", to_agent="B", ts="2026-06-21T00:00:10Z"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
@@ -135,8 +137,8 @@ def test_handoff_state_none_everywhere_returns_empty_list():
 def test_blocked_on_non_blocked_agent_no_cycle():
     """A blocked on B, but B's latest event is not blocked → no cycle, no report."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked on A"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="A"),
         _dispatch(3, agent="B", handoff_state=None),  # B now non-blocked (latest-state-wins)
     ]
     reports = detect_deadlock(events)
@@ -150,7 +152,7 @@ def test_self_wait_excluded():
     creates no outgoing edge and terminates the walk as acyclic.
     """
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on A"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="A"),
     ]
     reports = detect_deadlock(events)
     assert reports == []
@@ -159,7 +161,7 @@ def test_self_wait_excluded():
 def test_unknown_target_not_in_blocked_set_dropped():
     """A blocks on agent-x, but agent-x never appears in the stream → no edge."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on agent-x"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="agent-x"),
     ]
     reports = detect_deadlock(events)
     assert reports == []
@@ -170,7 +172,7 @@ def test_blocked_on_non_blocked_target_no_edge():
     → A has no outgoing edge in the graph → acyclic walk.
     """
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
         _dispatch(2, agent="B", handoff_state="waiting"),  # no target → blocked, but...
         _dispatch(3, agent="B", handoff_state=None),  # B's latest is non-blocked
     ]
@@ -181,8 +183,8 @@ def test_blocked_on_non_blocked_target_no_edge():
 def test_latest_state_flip_to_non_blocked_dissolves_cycle():
     """A↔B cycle, but B's latest event flips to non-blocked → dissolved."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked on A"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="A"),
         _dispatch(3, agent="B", handoff_state="DONE"),  # B recovers
     ]
     reports = detect_deadlock(events)
@@ -192,10 +194,10 @@ def test_latest_state_flip_to_non_blocked_dissolves_cycle():
 def test_two_disjoint_deadlocks_two_reports():
     """Two independent cycles in the same stream → two distinct reports."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked on A"),
-        _dispatch(3, agent="C", handoff_state="blocked on D"),
-        _dispatch(4, agent="D", handoff_state="blocked on C"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="A"),
+        _dispatch(3, agent="C", handoff_state="blocked", to_agent="D"),
+        _dispatch(4, agent="D", handoff_state="blocked", to_agent="C"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 2
@@ -213,23 +215,23 @@ def test_two_disjoint_deadlocks_two_reports():
 # ---------------------------------------------------------------------------
 
 
-def test_malformed_handoff_string_no_crash():
-    """Malformed handoff_state strings parse to None without crashing."""
+def test_non_blocked_token_no_crash():
+    """handoff_state tokens not in blocked_states classify as non-blocked, no crash."""
     events = [
-        _dispatch(1, agent="A", handoff_state="garbage text with no delimiter"),
-        _dispatch(2, agent="B", handoff_state="BLOCKED but no target specified"),
+        _dispatch(1, agent="A", handoff_state="garbage", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="in_progress", to_agent="A"),
     ]
-    # Neither event parses as blocked (no recognized delimiter and no blocked token),
+    # Neither bare token is in the default blocked_states {"blocked", "waiting"},
     # so the blocked map is empty → [] (no crash).
     reports = detect_deadlock(events)
     assert reports == []
 
 
-def test_blocked_no_target_parses_to_none_target():
-    """'blocked' with no delimiter → BlockedWait(target=None) → dead-end node."""
+def test_blocked_no_target_is_dead_end_node():
+    """'blocked' with to_agent=None → dead-end node (no outgoing edge)."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked"),  # no target
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent=None),  # no target
     ]
     # A blocks on B; B blocks but names no target.
     # B's edge is None (dead-end) → A has no cycle → no report.
@@ -245,8 +247,8 @@ def test_blocked_no_target_parses_to_none_target():
 def test_case_insensitive_blocked_token_matching():
     """'BLOCKED' (uppercase) matches the default blocked_states (lowercase 'blocked')."""
     events = [
-        _dispatch(1, agent="A", handoff_state="BLOCKED on B"),
-        _dispatch(2, agent="B", handoff_state="BLOCKED on A"),
+        _dispatch(1, agent="A", handoff_state="BLOCKED", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="BLOCKED", to_agent="A"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
@@ -256,8 +258,8 @@ def test_case_insensitive_blocked_token_matching():
 def test_waiting_token_matches_default_blocked_states():
     """'waiting' is in the default blocked_states."""
     events = [
-        _dispatch(1, agent="A", handoff_state="waiting on B"),
-        _dispatch(2, agent="B", handoff_state="waiting on A"),
+        _dispatch(1, agent="A", handoff_state="waiting", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="waiting", to_agent="A"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
@@ -266,8 +268,8 @@ def test_waiting_token_matches_default_blocked_states():
 def test_custom_blocked_states_config():
     """Custom blocked_states configuration recognized (e.g. 'stalled')."""
     events = [
-        _dispatch(1, agent="A", handoff_state="stalled on B"),
-        _dispatch(2, agent="B", handoff_state="stalled on A"),
+        _dispatch(1, agent="A", handoff_state="stalled", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="stalled", to_agent="A"),
     ]
     cfg = DetectionConfig(blocked_states=frozenset({"stalled"}))
     reports = detect_deadlock(events, config=cfg)
@@ -282,8 +284,8 @@ def test_custom_blocked_states_config():
 def test_prevented_cost_always_zero_for_deadlock():
     """Deadlock prevented_cost=0.0 (wall-clock hang, not recurring spend)."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B", cost_usd=100.0),
-        _dispatch(2, agent="B", handoff_state="blocked on A", cost_usd=200.0),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B", cost_usd=100.0),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="A", cost_usd=200.0),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
@@ -293,8 +295,8 @@ def test_prevented_cost_always_zero_for_deadlock():
 def test_prevented_runs_always_zero_for_deadlock():
     """Deadlock prevented_runs=0 (blocked agents not actively running)."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked on A"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="A"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
@@ -304,8 +306,8 @@ def test_prevented_runs_always_zero_for_deadlock():
 def test_prevented_cost_with_math_isclose_precision():
     """Prevented costs use math.isclose for deterministic floating-point comparison."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B", cost_usd=0.0),
-        _dispatch(2, agent="B", handoff_state="blocked on A", cost_usd=0.0),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B", cost_usd=0.0),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="A", cost_usd=0.0),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
@@ -325,8 +327,8 @@ def test_min_cycle_len_config():
     the only observable case.
     """
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked on A"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="A"),
     ]
     # Default min_cycle_len=2 includes this 2-cycle.
     reports = detect_deadlock(events)
@@ -346,7 +348,7 @@ def test_empty_stream_returns_empty_list():
 
 def test_single_event_returns_empty_list():
     """Single event cannot form a cycle → []."""
-    events = [_dispatch(1, agent="A", handoff_state="blocked on B")]
+    events = [_dispatch(1, agent="A", handoff_state="blocked", to_agent="B")]
     reports = detect_deadlock(events)
     assert reports == []
 
@@ -357,10 +359,10 @@ def test_single_event_returns_empty_list():
 
 
 def test_hyphenated_agent_names_in_cycle():
-    """Agent names with hyphens (e.g. 'code-writer') parse correctly in targets."""
+    """Agent names with hyphens (e.g. 'code-writer') work as explicit to_agent targets."""
     events = [
-        _dispatch(1, agent="code-writer", handoff_state="blocked on code-reviewer"),
-        _dispatch(2, agent="code-reviewer", handoff_state="blocked on code-writer"),
+        _dispatch(1, agent="code-writer", handoff_state="blocked", to_agent="code-reviewer"),
+        _dispatch(2, agent="code-reviewer", handoff_state="blocked", to_agent="code-writer"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
@@ -370,48 +372,19 @@ def test_hyphenated_agent_names_in_cycle():
 
 
 # ---------------------------------------------------------------------------
-# DELIMITER HANDLING
+# EXPLICIT to_agent TARGET (replaces the retired packed-delimiter grammar)
 # ---------------------------------------------------------------------------
 
 
-def test_equals_delimiter_in_handoff_state():
-    """Delimiter '=' is recognized in handoff_state."""
+def test_explicit_to_agent_target_forms_edge():
+    """The wait-for edge is read directly from event.to_agent (no delimiter scan)."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked=B"),
-        _dispatch(2, agent="B", handoff_state="blocked=A"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="A"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
-
-
-def test_colon_delimiter_in_handoff_state():
-    """Delimiter ':' is recognized in handoff_state."""
-    events = [
-        _dispatch(1, agent="A", handoff_state="blocked: B"),
-        _dispatch(2, agent="B", handoff_state="blocked: A"),
-    ]
-    reports = detect_deadlock(events)
-    assert len(reports) == 1
-
-
-def test_on_phrase_delimiter_in_handoff_state():
-    """Delimiter ' on ' is recognized in handoff_state."""
-    events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked on A"),
-    ]
-    reports = detect_deadlock(events)
-    assert len(reports) == 1
-
-
-def test_to_phrase_delimiter_in_handoff_state():
-    """Delimiter ' to ' is recognized in handoff_state."""
-    events = [
-        _dispatch(1, agent="A", handoff_state="blocked to B"),
-        _dispatch(2, agent="B", handoff_state="blocked to A"),
-    ]
-    reports = detect_deadlock(events)
-    assert len(reports) == 1
+    assert reports[0].signature == ("A", "B")
 
 
 # ---------------------------------------------------------------------------
@@ -422,8 +395,8 @@ def test_to_phrase_delimiter_in_handoff_state():
 def test_pathology_report_is_frozen():
     """PathologyReport is frozen (@dataclass(frozen=True, slots=True))."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked on A"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="A"),
     ]
     reports = detect_deadlock(events)
     report = reports[0]
@@ -438,8 +411,8 @@ def test_pathology_report_is_frozen():
 def test_blocked_agents_is_frozenset():
     """blocked_agents is a frozenset (immutable and hashable)."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked on A"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="A"),
     ]
     reports = detect_deadlock(events)
     report = reports[0]
@@ -455,10 +428,10 @@ def test_blocked_agents_is_frozenset():
 def test_four_cycle_deadlock():
     """A→B→C→D→A all blocked → one deadlock report."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked on C"),
-        _dispatch(3, agent="C", handoff_state="blocked on D"),
-        _dispatch(4, agent="D", handoff_state="blocked on A"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="C"),
+        _dispatch(3, agent="C", handoff_state="blocked", to_agent="D"),
+        _dispatch(4, agent="D", handoff_state="blocked", to_agent="A"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
@@ -469,11 +442,11 @@ def test_four_cycle_deadlock():
 def test_five_cycle_deadlock():
     """A→B→C→D→E→A all blocked."""
     events = [
-        _dispatch(1, agent="A", handoff_state="blocked on B"),
-        _dispatch(2, agent="B", handoff_state="blocked on C"),
-        _dispatch(3, agent="C", handoff_state="blocked on D"),
-        _dispatch(4, agent="D", handoff_state="blocked on E"),
-        _dispatch(5, agent="E", handoff_state="blocked on A"),
+        _dispatch(1, agent="A", handoff_state="blocked", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="blocked", to_agent="C"),
+        _dispatch(3, agent="C", handoff_state="blocked", to_agent="D"),
+        _dispatch(4, agent="D", handoff_state="blocked", to_agent="E"),
+        _dispatch(5, agent="E", handoff_state="blocked", to_agent="A"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1
@@ -481,25 +454,24 @@ def test_five_cycle_deadlock():
 
 
 # ---------------------------------------------------------------------------
-# UPPERCASE HANDOFF STATES — regression for the " ON " case-sensitivity bug
+# UPPERCASE BLOCKED TOKEN — case-insensitive blocked_states membership
 # ---------------------------------------------------------------------------
-# Previously, "BLOCKED ON B" failed to produce a wait-for edge because
-# handoff_state.find(" on ") returned -1 (case-sensitive).  The leading-word
-# fallback then grabbed the whole string ("blocked on b"), which is not in the
-# blocked_states set, so the event was silently dropped from the blocked map.
-# A deadlock built entirely from uppercase handoff states was invisible.
+# Under the explicit-to_agent contract, handoff_state carries only the bare
+# state token.  An uppercase "BLOCKED" token must still match the default
+# lowercase blocked_states set (case-insensitive on both sides), so a deadlock
+# built from uppercase handoff states remains visible.
 
 
-def test_uppercase_handoff_states_2_cycle_deadlock():
-    """2-cycle deadlock with uppercase 'BLOCKED ON x' handoff states is detected.
+def test_uppercase_blocked_token_2_cycle_deadlock():
+    """2-cycle deadlock with an uppercase 'BLOCKED' token is detected.
 
-    Integration proof: the case-insensitive delimiter fix in _shared.py must
-    propagate through _parse_target → _parse_blocked → detect_deadlock so that
-    a real CAST-style uppercase handoff does not silently miss the deadlock.
+    Locks case-insensitive blocked_states membership: handoff_state="BLOCKED"
+    matches the default lowercase 'blocked', and the edge comes from the
+    explicit to_agent field.
     """
     events = [
-        _dispatch(1, agent="A", handoff_state="BLOCKED ON B"),
-        _dispatch(2, agent="B", handoff_state="BLOCKED ON A"),
+        _dispatch(1, agent="A", handoff_state="BLOCKED", to_agent="B"),
+        _dispatch(2, agent="B", handoff_state="BLOCKED", to_agent="A"),
     ]
     reports = detect_deadlock(events)
     assert len(reports) == 1

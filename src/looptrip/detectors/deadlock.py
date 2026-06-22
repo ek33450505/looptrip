@@ -9,25 +9,24 @@ Algorithm overview (Chandy–Misra–Haas adapted for the single-target grammar)
 ------------------------------------------------------------------------------
 
 1. **Latest-state-wins pass** — scan the feed-ordered event stream, recording
-   for each agent its *latest* event together with the parsed
-   :class:`~looptrip.detectors._shared.BlockedWait` result.  An agent whose
+   for each agent its *latest* event together with its
+   :func:`~looptrip.detectors._shared._is_blocked` verdict.  An agent whose
    latest event is *not* blocked is treated as non-blocked, even if earlier
    events indicated blocking (a retry, a timeout, or a successful handoff can
    dissolve a prior wait).
 
 2. **Blocked map** — retain only agents whose latest event is blocked
-   (``_parse_blocked`` returned a non-``None``
-   :class:`~looptrip.detectors._shared.BlockedWait`).  When the map is empty
-   (no blocked agent, or ``handoff_state`` is ``None`` everywhere) the function
-   returns ``[]`` immediately without error.
+   (:func:`~looptrip.detectors._shared._is_blocked` returned ``True``).  When
+   the map is empty (no blocked agent, or ``handoff_state`` is ``None``
+   everywhere) the function returns ``[]`` immediately without error.
 
 3. **Functional wait-for graph** — build a directed graph among the blocked
-   agents.  An edge ``u → t`` exists iff ``u``'s
-   :attr:`~looptrip.detectors._shared.BlockedWait.target` equals ``t``,
-   ``t`` is itself blocked, and ``t ≠ u`` (self-loops are excluded; the
-   validator enforces ``min_cycle_len ≥ 2``).  Because the single-target
-   grammar allows at most one named waiter per event, the graph is
-   *functional* (out-degree ≤ 1).
+   agents.  An edge ``u → t`` exists iff ``u``'s ``event.to_agent`` equals
+   ``t``, ``t`` is itself blocked, and ``t ≠ u`` (self-loops are excluded; the
+   validator enforces ``min_cycle_len ≥ 2``).  The wait-for target is read
+   directly from the explicit ``to_agent`` field — no delimiter scanning — so
+   at most one named waiter exists per event and the graph is *functional*
+   (out-degree ≤ 1).
 
 4. **Memoized O(V) cycle detection** — for each unclassified blocked node,
    walk its unique outgoing edge while recording the current trail.  A
@@ -40,11 +39,13 @@ Algorithm overview (Chandy–Misra–Haas adapted for the single-target grammar)
 5. **Report emission** — one :class:`~looptrip.detectors.types.PathologyReport`
    per distinct cycle whose ``len(members) ≥ config.min_cycle_len``.
 
-**Inherent limitation:** this detector REQUIRES ``handoff_state`` to carry
-blocked-state tokens (e.g. ``"blocked on code-writer"``, ``"BLOCKED: agent-x"``).
-When every event in the stream has ``handoff_state=None`` — the cast.db reality
-for many CAST agents — the blocked map is empty and :func:`detect_deadlock`
-returns ``[]`` without error.  This is the accepted, documented limitation;
+**Inherent limitation:** this detector REQUIRES ``handoff_state`` to carry a
+bare blocked-state token (e.g. ``"blocked"``, ``"BLOCKED"``, ``"waiting"``) and
+the wait-for edge requires the explicit ``to_agent`` field to name the awaited
+agent.  When every event in the stream has ``handoff_state=None`` — the cast.db
+reality for many CAST agents — the blocked map is empty and
+:func:`detect_deadlock` returns ``[]`` without error.  This is the accepted,
+documented limitation;
 :func:`~looptrip.detectors.ping_pong.detect_ping_pong` and
 :func:`~looptrip.detectors.non_termination.detect_non_termination` are the
 handoff-free complementary detectors.
@@ -66,7 +67,7 @@ from looptrip.detectors.types import (
     resolve_config,
 )
 from looptrip.detectors._shared import (
-    _parse_blocked,
+    _is_blocked,
 )
 
 
@@ -90,11 +91,11 @@ def detect_deadlock(
     dissolves the prior wait.  Only the final event per agent contributes to
     the blocked map.
 
-    **Inherent limitation:** ``handoff_state`` must carry blocked-state tokens
-    (e.g. ``"blocked on agent-x"``, ``"BLOCKED: code-writer"``).  When every
-    event has ``handoff_state=None`` the return value is always ``[]`` —
-    no exception, no false positives.  This is the documented accepted
-    limitation.
+    **Inherent limitation:** ``handoff_state`` must carry a bare blocked-state
+    token (e.g. ``"blocked"``, ``"BLOCKED"``) and the wait-for edge is read from
+    the explicit ``to_agent`` field.  When every event has
+    ``handoff_state=None`` the return value is always ``[]`` — no exception, no
+    false positives.  This is the documented accepted limitation.
 
     The function resolves its own configuration via
     :func:`~looptrip.detectors.types.resolve_config` so it can be called
@@ -116,9 +117,10 @@ def detect_deadlock(
                  :func:`~looptrip.detectors.types.resolve_config`.  Key
                  knobs for this detector:
 
-                 * ``blocked_states`` — frozenset of leading-word tokens
-                   that classify an event as blocked (matched
-                   case-insensitively; default ``{"blocked", "waiting"}``).
+                 * ``blocked_states`` — frozenset of bare state tokens
+                   that classify an event's ``handoff_state`` as blocked
+                   (matched case-insensitively; default
+                   ``{"blocked", "waiting"}``).
                  * ``min_cycle_len`` — minimum number of distinct agents
                    required in a cycle (default ``2``; self-loops always
                    excluded).
@@ -144,24 +146,25 @@ def detect_deadlock(
     # Phase 1 — latest-state-wins pass                                     #
     # ------------------------------------------------------------------ #
     # Scan every event in feed order, updating each agent's (latest_event,
-    # parsed_blocked_wait) pair.  Later events overwrite earlier ones, so
-    # only the final state per agent is retained.
-    latest: dict[str, tuple[Event, object]] = {}
+    # is_blocked) pair.  Later events overwrite earlier ones, so only the
+    # final state per agent is retained.
+    latest: dict[str, tuple[Event, bool]] = {}
     for event in events:
-        bw = _parse_blocked(event.handoff_state, cfg)
-        latest[event.agent] = (event, bw)
+        blk = _is_blocked(event.handoff_state, cfg)
+        latest[event.agent] = (event, blk)
 
     # ------------------------------------------------------------------ #
     # Phase 2 — blocked map                                                #
     # ------------------------------------------------------------------ #
-    # Keep only agents whose *latest* event resolved to a BlockedWait.
+    # Keep only agents whose *latest* event is blocked (_is_blocked True).
     # Agents whose latest event is non-blocked are dropped (latest-state wins).
-    # When handoff_state is None everywhere bw is always None → blocked is
-    # empty → return [] immediately (the documented inherent limitation).
-    blocked: dict[str, tuple[object, Event]] = {
-        agent: (bw, ev)
-        for agent, (ev, bw) in latest.items()
-        if bw is not None
+    # When handoff_state is None everywhere _is_blocked is always False →
+    # blocked is empty → return [] immediately (the documented inherent
+    # limitation).
+    blocked: dict[str, tuple[bool, Event]] = {
+        agent: (blk, ev)
+        for agent, (ev, blk) in latest.items()
+        if blk
     }
 
     if not blocked:
@@ -171,12 +174,12 @@ def detect_deadlock(
     # Phase 3 — functional wait-for graph                                  #
     # ------------------------------------------------------------------ #
     # Build a directed graph among blocked agents only.
-    # Edge u → t iff: u.target == t AND t ∈ blocked AND t != u.
+    # Edge u → t iff: u's to_agent == t AND t ∈ blocked AND t != u.
     # Out-degree is at most 1 (functional graph). Absent/invalid targets
     # become None (dead-end in the graph, no outgoing edge).
     graph: dict[str, Optional[str]] = {}
-    for u, (bw, _ev) in blocked.items():
-        t = bw.target  # type: ignore[union-attr]
+    for u, (_blk, ev) in blocked.items():
+        t = ev.to_agent
         if t is not None and t in blocked and t != u:
             graph[u] = t
         else:

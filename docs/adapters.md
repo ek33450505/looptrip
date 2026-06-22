@@ -34,7 +34,8 @@ Event(
     tool: str,               # Action kind. Constant for sources with no per-action tool column.
     args_hash: Optional[str],  # Stable hash of action args, or None.
     ts: str,                 # ISO-8601 timestamp string.
-    handoff_state: Optional[str] = None,  # Parsed ## Handoff state (enrichment; never required).
+    handoff_state: Optional[str] = None,  # Bare ## Handoff state token (enrichment; never required).
+    to_agent: Optional[str] = None,       # Explicit handoff target agent (enrichment; never required).
     input_tokens: Optional[int] = None,    # Prompt-token count, if known.
     cost_usd: Optional[float] = None,      # Action cost in USD, if known.
     progress: bool = False,  # True iff this event marks a state delta.
@@ -65,7 +66,8 @@ Two events with identical signatures are duplicate-work candidates; detection co
 
 | Event Field | Semantics | How to Populate |
 |---|---|---|
-| `handoff_state` | Parsed `## Handoff` block state (e.g., status, files_changed) | Extract from source if available; `None` for STATUS_CONTRACT_EXEMPT agents or when unavailable. Required only by the deadlock detector. |
+| `handoff_state` | **Bare** `## Handoff` state token (e.g., `"DONE"`, `"blocked"`, `"waiting"`, `"in_progress"`) — never a packed `"blocked on X"` string | Extract from source if available; `None` for STATUS_CONTRACT_EXEMPT agents or when unavailable. First-class adapters set the bare token directly. Required only by the deadlock detector. |
+| `to_agent` | Explicit handoff target agent (the awaited/destination agent), or `None` | First-class adapters (cast.db, OTel) set this directly alongside `handoff_state` — e.g. from `gen_ai.agent.handoff.target.name`. The deadlock detector reads it directly with no delimiter scanning. For a legacy packed `"state on target"` corpus, `looptrip.normalize.split_handoff_state()` is the one-time ingestion seam that splits the string into `(handoff_state, to_agent)`. |
 | `input_tokens` | Prompt-token count for the action | Source column (e.g., `agent_runs.input_tokens`). Used by duplicate-work detector for token-variance tolerance. |
 | `cost_usd` | Cost in USD, full precision | Source column or computed from input/output tokens. Critical for `prevented_cost` reporting. |
 | `progress` | True iff this event marks a progress delta | Extract from source (e.g., `status != "DONE_WITH_CONCERNS"`, or parse `## Handoff` block for explicit progress marker). |
@@ -109,6 +111,7 @@ class CastDbAdapter(Adapter):
                 args_hash=None,            # No args hash available in schema
                 ts=row["started_at"],
                 handoff_state=None,        # Not available in agent_runs
+                to_agent=None,             # No explicit handoff target in agent_runs
                 input_tokens=row["input_tokens"],
                 cost_usd=row["cost_usd"],
                 progress=False,            # Never recorded in agent_runs
@@ -120,7 +123,7 @@ class CastDbAdapter(Adapter):
 
 - `tool="dispatch"` is a constant—every row is a dispatch, and there is no per-action tool distinction in the schema.
 - `args_hash=None` because the table has no args column. Detection relies on `(agent, ts)` repeat + token variance.
-- `handoff_state=None` because the table does not store the `## Handoff` block. The deadlock detector will find no handoff edges and return `[]`.
+- `handoff_state=None` and `to_agent=None` because the table does not store the `## Handoff` block. The deadlock detector will find no wait-for edges and return `[]`.
 - `progress=False` because agent_runs does not record intra-run progress deltas. Status moves (e.g., `DONE` → `DONE_WITH_CONCERNS`) are not captured.
 
 See the full implementation: [`src/looptrip/adapters/cast_db.py`](../src/looptrip/adapters/cast_db.py).
@@ -166,8 +169,10 @@ class OTelAdapter(Adapter):
             args_parts = [model, str(temperature)]
             args_hash = args_hash_from(*args_parts) if all(args_parts) else None
             
-            # Extract handoff state if your span metadata includes it.
-            handoff_state = self._extract_handoff_state(span)
+            # Bare state token and explicit target are two SEPARATE attributes —
+            # set them directly onto two separate fields, no packed string.
+            handoff_state = attrs.get("gen_ai.agent.handoff.state")  # bare token
+            to_agent = attrs.get("gen_ai.agent.handoff.target.name")  # explicit target
             
             yield Event(
                 agent=attrs.get("service.name", "unknown"),
@@ -175,6 +180,7 @@ class OTelAdapter(Adapter):
                 args_hash=args_hash,
                 ts=span["start_time"],
                 handoff_state=handoff_state,
+                to_agent=to_agent,
                 input_tokens=attrs.get("gen_ai.usage.input_tokens"),
                 cost_usd=self._compute_cost(attrs),
                 progress=self._infer_progress(span),
@@ -185,7 +191,7 @@ class OTelAdapter(Adapter):
 **Notes:**
 
 - Use `args_hash_from()` to deterministically hash operation name, model, and other action parameters—**order matters**.
-- Set `handoff_state` if your spans or traces include agent status/state information (e.g., via `gen_ai.agent.status` or a custom attribute). Leave `None` if unavailable.
+- Set `handoff_state` to the **bare** state token (e.g., `"blocked"`, `"waiting"`, `"in_progress"`) from `gen_ai.agent.handoff.state`, and set `to_agent` to the explicit target from `gen_ai.agent.handoff.target.name`. These are two separate fields — never pack them into one `"state on target"` string. Leave both `None` if unavailable.
 - Infer `progress` from span attributes (e.g., span did not error, or a custom `succeeded` flag).
 
 ## Generic JSONL Adapter (Guidance)
@@ -223,7 +229,8 @@ class JSONLAdapter(Adapter):
                 tool=record.get("action", "unknown"),
                 args_hash=args_hash,
                 ts=record["timestamp"],
-                handoff_state=record.get("state"),
+                handoff_state=record.get("state"),       # bare state token
+                to_agent=record.get("to_agent"),         # explicit handoff target, or None
                 input_tokens=record.get("tokens"),
                 cost_usd=record.get("cost"),
                 progress=record.get("progress", False),
@@ -236,7 +243,7 @@ class JSONLAdapter(Adapter):
 - Always sort by `ts` before yielding, to satisfy the non-decreasing ordering constraint.
 - Map your `action` or `operation` field to `tool`; use a namespace prefix if needed (e.g., `"jsonl/my-action"`).
 - For `args_hash`, collect action-specific parameters into a stable tuple and pass to `args_hash_from()`. If args are complex objects, serialize them (e.g., `json.dumps(..., sort_keys=True)`) before hashing.
-- `handoff_state` is optional enrichment; set it if your logs capture agent state transitions.
+- `handoff_state` is optional enrichment; set it to the bare state token if your logs capture agent state transitions. Put any handoff target in the separate `to_agent` field — never pack them as `"state on target"`. If your legacy logs only have the packed form, run it through `looptrip.normalize.split_handoff_state()` once at ingestion to produce `(handoff_state, to_agent)`.
 
 ## Complete Runnable Example
 
@@ -348,7 +355,7 @@ When authoring an adapter:
 - [ ] Populate `agent`, `tool`, `args_hash`, and `ts` (load-bearing fields).
 - [ ] When `args_hash` is unavailable, set it to `None` and rely on token-variance detection.
 - [ ] Populate `input_tokens` and `cost_usd` if available (critical for cost reporting).
-- [ ] Populate `handoff_state` only if your source captures agent state; leave `None` for STATUS_CONTRACT_EXEMPT agents.
+- [ ] Populate `handoff_state` (bare state token) and `to_agent` (explicit target) only if your source captures agent state; leave both `None` for STATUS_CONTRACT_EXEMPT agents. Never pack the target into `handoff_state`.
 - [ ] Set `progress=True` only when the event explicitly marks a state delta in your source.
 - [ ] Return `raw_id` for forensic traceability.
 - [ ] Test your adapter by feeding `adapter.events()` into `detect()` and verifying the output matches expectations.

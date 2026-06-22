@@ -30,7 +30,8 @@ class Event:
     tool: str               # what kind of action (e.g. "dispatch")
     args_hash: Optional[str]  # stable hash of action arguments, or None
     ts: str                 # ISO-8601 timestamp
-    handoff_state: Optional[str] = None  # enrichment; Handoff ## block
+    handoff_state: Optional[str] = None  # enrichment; bare state token only
+    to_agent: Optional[str] = None       # enrichment; explicit handoff target
     input_tokens: Optional[int] = None   # prompt token count
     cost_usd: Optional[float] = None     # action cost in USD
     progress: bool = False               # True if this event marks a progress delta
@@ -49,7 +50,8 @@ class Event:
 
 **Enrichment fields:**
 
-- **`handoff_state`** — parsed `## Handoff` state (e.g., `"DONE"`, `"BLOCKED on code-writer"`). Pure enrichment; `None` for status-contract-exempt agents. Never required for detection.
+- **`handoff_state`** — the **bare** `## Handoff` state token (e.g., `"DONE"`, `"blocked"`, `"waiting"`, `"in_progress"`, a progress marker). It NEVER carries a packed `"blocked on code-writer"` form; the handoff target lives in `to_agent`. Pure enrichment; `None` for status-contract-exempt agents. Never required for detection.
+- **`to_agent`** — the explicit handoff target agent (e.g., `"code-writer"`), or `None` when absent. Maps from `gen_ai.agent.handoff.target.name`. Detectors read it directly with no delimiter scanning. **Not** part of `signature()` — `event.agent` is the source, `to_agent` is the destination.
 - **`progress`** — `True` if this event marks a state-delta. A repeated signature with no progress delta is the duplicate-work signal.
 - **`input_tokens`** / **`cost_usd`** — used for pairwise token-proximity checks and prevented-cost accounting.
 
@@ -152,31 +154,32 @@ The detector tracks the current directed path since the last epoch reset. When a
 **Pathology:** mutually-blocked agents forming a directed wait-for cycle, none able to progress.
 
 **Trip condition:**
-- Each agent in a **set of `>= min_cycle_len` agents** (default 2) has a **latest event marked as blocked** (parsed `handoff_state` leading word matches a `blocked_states` token, case-insensitive).
-- Each blocked agent is **waiting on another agent in the set**, forming a **directed cycle in the wait-for graph** (e.g., A→B→C→A).
+- Each agent in a **set of `>= min_cycle_len` agents** (default 2) has a **latest event marked as blocked** (its bare `handoff_state` token matches a `blocked_states` token, case-insensitive — no leading-word parsing).
+- Each blocked agent is **waiting on another agent in the set** (the awaited agent is named by the explicit `to_agent` field), forming a **directed cycle in the wait-for graph** (e.g., A→B→C→A).
 - The cycle is **mutable**: an agent whose latest event is *not* blocked is removed from the cycle, even if earlier events indicated blocking (a retry, timeout, or successful handoff dissolves the wait).
 
-**Token dependency:** **Token-independent** — reads only `handoff_state` for blocked-state parsing and target extraction.
+**Token dependency:** **Token-independent** — reads only the bare `handoff_state` token (blocked-state match) and the explicit `to_agent` field (wait-for target).
 
-**Handoff requirement:** **REQUIRED.** Must have `handoff_state` values like `"blocked on code-writer"`, `"BLOCKED: agent-x"`, or `"waiting to orchestrator"`. When every event has `handoff_state=None`, the detector returns `[]` without error (the documented inherent limitation).
+**Handoff requirement:** **REQUIRED.** Must have events whose `handoff_state` is a bare blocked-state token (e.g., `"blocked"`, `"waiting"`) **and** whose `to_agent` names the awaited agent (e.g., `to_agent="code-writer"`). When every event has `handoff_state=None`, the detector returns `[]` without error (the documented inherent limitation).
 
-**Parse grammar:**
+**Explicit-field model:**
 
-Recognized delimiters (case-insensitive): `"="`, `":"`, `" on "`, `" to "`. The earliest delimiter wins.
+There is **no delimiter scanning** in the detection path. The wait-for edge is read straight off two explicit fields — `handoff_state` (the bare blocked token) and `to_agent` (the target). First-class adapters (cast.db, OTel) set both directly:
 
 ```
-"blocked on code-writer"  →  target="code-writer"
-"BLOCKED: agent-x"        →  target="agent-x"
-"WAITING TO commit-agent" →  target="commit-agent"
-"BLOCKED"                 →  target=None (blocked; no named target)
+handoff_state="blocked", to_agent="code-writer"  →  blocked, waiting on code-writer
+handoff_state="waiting", to_agent="agent-x"      →  waiting on agent-x
+handoff_state="blocked", to_agent=None           →  blocked; no named target
 ```
+
+The legacy packed `"state on target"` corpus is split once at ingestion by `split_handoff_state()` (a simple single-`" on "` splitter) — it is the legacy seam, never invoked in the detector.
 
 **Exemplar:**
 
 ```
-agent="code-writer",  handoff_state="blocked on code-reviewer"  → waiting on code-reviewer
-agent="code-reviewer", handoff_state="blocked on orchestrator"   → waiting on orchestrator
-agent="orchestrator",  handoff_state="blocked on code-writer"    → waiting on code-writer
+agent="code-writer",   handoff_state="blocked", to_agent="code-reviewer"  → waiting on code-reviewer
+agent="code-reviewer", handoff_state="blocked", to_agent="orchestrator"   → waiting on orchestrator
+agent="orchestrator",  handoff_state="blocked", to_agent="code-writer"    → waiting on code-writer
                        (cycle: code-writer → code-reviewer → orchestrator → code-writer) ← TRIP
 ```
 

@@ -7,7 +7,7 @@ import hashlib
 
 import pytest
 
-from looptrip.normalize import Adapter, Event, args_hash_from
+from looptrip.normalize import Adapter, Event, args_hash_from, split_handoff_state
 
 
 # ---------------------------------------------------------------------------
@@ -22,6 +22,7 @@ def test_event_minimal_construction_and_defaults():
     assert ev.args_hash is None
     assert ev.ts == "2026-06-21T00:00:00Z"
     assert ev.handoff_state is None
+    assert ev.to_agent is None
     assert ev.input_tokens is None
     assert ev.cost_usd is None
     assert ev.progress is False
@@ -35,13 +36,15 @@ def test_event_full_construction_preserves_fields():
         tool="dispatch",
         args_hash="deadbeef",
         ts="2026-06-21T01:02:03Z",
-        handoff_state="DONE",
+        handoff_state="blocked",
+        to_agent="code-reviewer",
         input_tokens=1234,
         cost_usd=10.98,
         progress=True,
         raw_id=554,
     )
-    assert ev.handoff_state == "DONE"
+    assert ev.handoff_state == "blocked"
+    assert ev.to_agent == "code-reviewer"
     assert ev.input_tokens == 1234
     assert ev.cost_usd == 10.98
     assert ev.progress is True
@@ -182,3 +185,48 @@ def test_incomplete_adapter_subclass_still_abstract():
 
     with pytest.raises(TypeError):
         Incomplete()  # type: ignore[abstract]
+
+
+# ---------------------------------------------------------------------------
+# split_handoff_state — legacy packed-string splitter
+# ---------------------------------------------------------------------------
+
+def test_split_handoff_state_basic_on_delimiter():
+    """A simple 'state on target' splits into (state, target)."""
+    assert split_handoff_state("blocked on code-writer") == ("blocked", "code-writer")
+
+
+def test_split_handoff_state_delimiter_is_case_insensitive():
+    """The ' on ' delimiter matches regardless of case (' ON ', ' On ')."""
+    assert split_handoff_state("blocked ON code-writer") == ("blocked", "code-writer")
+    assert split_handoff_state("waiting On test-runner") == ("waiting", "test-runner")
+
+
+def test_split_handoff_state_preserves_hyphenated_target():
+    """A hyphenated target name is preserved verbatim (no further splitting)."""
+    assert split_handoff_state("waiting on code-reviewer") == (
+        "waiting",
+        "code-reviewer",
+    )
+
+
+def test_split_handoff_state_no_delimiter_returns_state_and_none():
+    """A bare token with no ' on ' delimiter returns (token, None)."""
+    assert split_handoff_state("blocked") == ("blocked", None)
+    assert split_handoff_state("in_progress") == ("in_progress", None)
+
+
+def test_split_handoff_state_none_and_empty_return_none_pair():
+    """None and the empty string both map to (None, None)."""
+    assert split_handoff_state(None) == (None, None)
+    assert split_handoff_state("") == (None, None)
+
+
+def test_split_handoff_state_strips_surrounding_whitespace():
+    """Both halves are stripped of surrounding whitespace."""
+    assert split_handoff_state("  blocked on code-writer  ") == (
+        "blocked",
+        "code-writer",
+    )
+    # A whitespace-only input strips to empty -> (None, None).
+    assert split_handoff_state("   ") == (None, None)
