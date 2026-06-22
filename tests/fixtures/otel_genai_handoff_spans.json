@@ -1,0 +1,127 @@
+{
+  "_description": "Synthetic OTel GenAI spans for looptrip pathology-detector reference tests. These spans use the real upstream attribute keys from semantic-conventions-genai PR #98 so the fixture doubles as standards evidence.",
+  "_attribute_provenance": {
+    "gen_ai.agent.handoff.source.name": "semantic-conventions-genai PR #98 (adopted verbatim) — the agent performing the handoff",
+    "gen_ai.agent.handoff.target.name": "semantic-conventions-genai PR #98 (adopted verbatim) — the agent receiving the handoff",
+    "gen_ai.agent.handoff.state": "looptrip-PROPOSED enum (pending upstream) — PR #98 models a COMPLETED transfer only. PENDING values ('blocked', 'waiting') signal a wait-for edge; they match looptrip's blocked_states vocabulary and feed the deadlock detector. ACTIVE values ('in_progress') represent a live transfer in motion; _parse_target can still extract the hop target (enabling ping-pong handoff-edge detection) but these values do NOT match blocked_states, so the deadlock detector ignores them. The PENDING vs ACTIVE distinction is load-bearing for the deadlock-vs-ping-pong separation.",
+    "gen_ai.operation.name": "semantic-conventions-genai, value 'execute_tool'"
+  },
+  "scenarios": {
+    "deadlock": {
+      "_label": "(a) DEADLOCK — code-writer blocked awaiting code-reviewer, code-reviewer blocked awaiting code-writer; directed wait-for cycle",
+      "_expected": "detect_deadlock() fires; blocked_agents == {'code-writer', 'code-reviewer'}",
+      "spans": [
+        {
+          "span_id": "span-dl-001",
+          "start_time": "2024-06-01T00:00:01Z",
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.agent.handoff.source.name": "code-writer",
+            "gen_ai.agent.handoff.target.name": "code-reviewer",
+            "gen_ai.agent.handoff.state": "blocked"
+          }
+        },
+        {
+          "span_id": "span-dl-002",
+          "start_time": "2024-06-01T00:00:02Z",
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.agent.handoff.source.name": "code-reviewer",
+            "gen_ai.agent.handoff.target.name": "code-writer",
+            "gen_ai.agent.handoff.state": "blocked"
+          }
+        }
+      ]
+    },
+    "ping_pong": {
+      "_label": "(b) PING-PONG — planner and code-writer actively bounce completed work to each other (planner→code-writer→planner→…) with no net progress; directed cycle closes twice",
+      "_expected": "detect_ping_pong(use_handoff_edges=True) fires; detect_deadlock() returns [] (livelock is NOT a deadlock — agents are active, not blocked-waiting)",
+      "_note": "state='in_progress' is an ACTIVE transfer: _parse_target extracts the hop target for handoff-edge detection, but the leading word 'in_progress' does not match blocked_states so detect_deadlock ignores these events entirely.",
+      "spans": [
+        {
+          "span_id": "span-pp-001",
+          "start_time": "2024-06-01T00:01:00Z",
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.agent.handoff.source.name": "planner",
+            "gen_ai.agent.handoff.target.name": "code-writer",
+            "gen_ai.agent.handoff.state": "in_progress"
+          }
+        },
+        {
+          "span_id": "span-pp-002",
+          "start_time": "2024-06-01T00:01:01Z",
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.agent.handoff.source.name": "code-writer",
+            "gen_ai.agent.handoff.target.name": "planner",
+            "gen_ai.agent.handoff.state": "in_progress"
+          }
+        },
+        {
+          "span_id": "span-pp-003",
+          "start_time": "2024-06-01T00:01:02Z",
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.agent.handoff.source.name": "planner",
+            "gen_ai.agent.handoff.target.name": "code-writer",
+            "gen_ai.agent.handoff.state": "in_progress"
+          }
+        },
+        {
+          "span_id": "span-pp-004",
+          "start_time": "2024-06-01T00:01:03Z",
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.agent.handoff.source.name": "code-writer",
+            "gen_ai.agent.handoff.target.name": "planner",
+            "gen_ai.agent.handoff.state": "in_progress"
+          }
+        },
+        {
+          "span_id": "span-pp-005",
+          "start_time": "2024-06-01T00:01:04Z",
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.agent.handoff.source.name": "planner",
+            "gen_ai.agent.handoff.target.name": "code-writer",
+            "gen_ai.agent.handoff.state": "in_progress"
+          }
+        }
+      ]
+    },
+    "control": {
+      "_label": "(c) CONTROL — clean linear handoff chain: agent-alpha → agent-beta → agent-gamma; no cycle; must NOT trip either detector",
+      "_expected": "detect_deadlock() returns []; detect_ping_pong(use_handoff_edges=True) returns []",
+      "_note": "No gen_ai.agent.handoff.state attribute on any span — these are completed (non-blocking) transfers. The mapping produces handoff_state=None, so the deadlock blocked-map is empty and ping-pong handoff-edge mode inserts no synthetic hops.",
+      "spans": [
+        {
+          "span_id": "span-ctrl-001",
+          "start_time": "2024-06-01T00:02:00Z",
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.agent.handoff.source.name": "agent-alpha",
+            "gen_ai.agent.handoff.target.name": "agent-beta"
+          }
+        },
+        {
+          "span_id": "span-ctrl-002",
+          "start_time": "2024-06-01T00:02:01Z",
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.agent.handoff.source.name": "agent-beta",
+            "gen_ai.agent.handoff.target.name": "agent-gamma"
+          }
+        },
+        {
+          "span_id": "span-ctrl-003",
+          "start_time": "2024-06-01T00:02:02Z",
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.agent.handoff.source.name": "agent-gamma"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -25,7 +25,7 @@ looptrip proof
 
 ## Why "iteration 2"
 
-Native runaway guards are blunt total-step counters that trip at N=10–25 — *after* the waste has compounded. looptrip's trip is a **safety predicate keyed on the pathology signature**: *no signature `(agent, tool, args_hash)` may recur without an intervening progress delta.* The instant a signature is seen a second time (within a configurable input-token tolerance, with no progress marker between), it fires — before the third wasted turn and the O(N²) context-cost compounding. "2" is the default threshold, not a magic number. The approach (signature-keyed detection with configurable thresholds) is what matters — the detector itself is not the moat; the durable asset is standards authorship of the open `gen_ai.handoff` semantic convention.
+Native runaway guards are blunt total-step counters that trip at N=10–25 — *after* the waste has compounded. looptrip's trip is a **safety predicate keyed on the pathology signature**: *no signature `(agent, tool, args_hash)` may recur without an intervening progress delta.* The instant a signature is seen a second time (within a configurable input-token tolerance, with no progress marker between), it fires — before the third wasted turn and the O(N²) context-cost compounding. "2" is the default threshold, not a magic number. The approach (signature-keyed detection with configurable thresholds) is what matters — the detector itself is not the moat; the durable asset is standards *engagement* — adopting the upstream OpenTelemetry GenAI `gen_ai.agent.handoff.*` convention and contributing the agent-loop pathology layer (pending-wait and loop-termination semantics) that looptrip uniquely detects.
 
 The worst real runaways are the hardest to catch: a `workflow-subagent` loop emits no structured handoff contract at all. So looptrip detects from the `(agent, ts)` repeat signal plus input-token variance alone; any handoff metadata only *enriches* the signal — it is never required.
 
@@ -53,7 +53,7 @@ This project tries hard not to oversell:
 
 - **Attribution numbers.** Published LLM-prompting baselines for "which handoff broke the run" sit around ~14% — but that is the *prompting* baseline; structured / deterministic methods reach 29–52%. Adding structure is the lever, and looptrip's deterministic replay (Phase 3) is the limit case of that frontier — not a fix for a permanent ceiling. We don't anchor to "14%."
 - **Cost numbers.** The $792.96 here is verifiable from the committed fixture. Larger figures circulate — e.g. a widely-reported "$47K" agent-loop bill — but those are **unverified**, and we label them as such.
-- **Prior art.** The market gap is real, but the durable asset is the *standard*, not the ~200-line detector. A direct competitor exists — **Watchtower** (MIT, LangGraph-only, trips at 3+ repeats, no handoff contract, no attribution). looptrip differentiates on framework-agnosticism, speed, and authorship of an open `gen_ai.handoff` semantic convention.
+- **Prior art.** The market gap is real, but the durable asset is the *standard*, not the ~200-line detector. A direct competitor exists — **Watchtower** (MIT, LangGraph-only, trips at 3+ repeats, no handoff contract, no attribution). looptrip differentiates on framework-agnosticism, speed, and standards engagement with the OpenTelemetry GenAI agent-observability conventions — adopting the upstream `gen_ai.agent.handoff.*` handoff identity and contributing the agent-loop pathology layer it uniquely detects.
 
 ## Roadmap
 
@@ -63,7 +63,7 @@ This project tries hard not to oversell:
 - **Phase 4** — live OpenTelemetry `SpanProcessor` (`on_start` detection / `on_end` attribution, AlwaysRecord sampler).
 - **Phase 5** — packaging (Claude Code plugin, Homebrew).
 - **Phase 6** — documentation (reference deep-dives, examples, architecture notes).
-- **Phase 7** — OpenTelemetry GenAI `gen_ai.handoff.*` semantic-convention contribution, with looptrip as the reference implementation.
+- **Phase 7** — OpenTelemetry GenAI agent-observability semantic-convention engagement: adopt the upstream `gen_ai.agent.handoff.*` handoff identity (`semantic-conventions-genai`) and contribute the pathology layer — a pending/blocking wait-for state and loop-termination (`gen_ai.agent.finish_reason`) semantics — with looptrip as the deterministic reference implementation.
 - **Phase 8** — launch.
 
 ## Documentation
