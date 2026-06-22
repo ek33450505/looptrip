@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "looptrip"
-version = "0.1.0"
+version = "0.1.1"
 description = "Deterministic, framework-agnostic detector of multi-agent coordination pathologies that trips at iteration 2"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -35,6 +35,13 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: System :: Monitoring",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ek33450505/looptrip"
+Repository = "https://github.com/ek33450505/looptrip"
+Issues = "https://github.com/ek33450505/looptrip/issues"
+Changelog = "https://github.com/ek33450505/looptrip/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/ek33450505/looptrip/tree/main/docs"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-cov"]

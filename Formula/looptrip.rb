@@ -3,10 +3,10 @@ class Looptrip < Formula
 
   desc "Deterministic detector of multi-agent coordination pathologies"
   homepage "https://github.com/ek33450505/looptrip"
-  # Points at the published PyPI sdist (not a GitHub archive) so the formula installs
-  # while the GitHub repo is still private; sha256 verified against files.pythonhosted.org.
-  url "https://files.pythonhosted.org/packages/1f/70/94795ce5be2634a1d2cdbc5cfade5f983707dbdf09bfded6fd79f348078d/looptrip-0.1.0.tar.gz"
-  sha256 "46269bd4b869705d9d8ed84ca18a08fa5567d0bbc5ba3a11cf052b531f581f37"
+  # Points at the published PyPI sdist (not a GitHub archive); sha256 verified
+  # against files.pythonhosted.org.
+  url "https://files.pythonhosted.org/packages/83/11/7c2e4cd3189f1c18369840dc3fdaa3475efb9c4fbf4b70036c2361f3f9bb/looptrip-0.1.1.tar.gz"
+  sha256 "bbf019a4ae2b27b74f92193d6d1e7ff73a4b964ba6623778924b5fffe4b6cf21"
   license "Apache-2.0"
 
   depends_on "python@3.13"

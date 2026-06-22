@@ -4,7 +4,7 @@
 
 looptrip watches a multi-agent run as a stream of normalized events and flags the coordination pathologies that make agent systems burn money and spin: duplicate-work loops, ping-pong / livelock, deadlock, and non-termination. It is **detection-first** — it works over data you already have (OpenTelemetry GenAI spans, or a CAST `cast.db`) — and **deterministic / zero-LLM**: the same event stream always yields the same verdict. looptrip is an **observer, never a gate**; it reports, it never blocks.
 
-> **This release (0.1.0)** ships full pathology coverage (duplicate-work, ping-pong / livelock, deadlock, non-termination), configurable sensitivity controls, counterfactual-replay attribution (via the `attribute` subcommand), and the `cast.db` adapter with reproducible proof on real data — plus **OpenTelemetry support** (Phase 4): an offline adapter (`OTelSpanAdapter` from flat span dicts and OTLP/JSON exports) plus a live `LooptripSpanProcessor` for in-flight detection, available in the `looptrip[otel]` extra.
+> **This release (0.1.1)** ships full pathology coverage (duplicate-work, ping-pong / livelock, deadlock, non-termination), configurable sensitivity controls, counterfactual-replay attribution (via the `attribute` subcommand), and the `cast.db` adapter with reproducible proof on real data — plus **OpenTelemetry support** (Phase 4): an offline adapter (`OTelSpanAdapter` from flat span dicts and OTLP/JSON exports) plus a live `LooptripSpanProcessor` for in-flight detection, available in the `looptrip[otel]` extra. (0.1.0 was published before the Phase 4 code merged and shipped without the OTel modules; 0.1.1 is the first artifact to actually include them.)
 
 ## The headline
 
@@ -57,14 +57,14 @@ This project tries hard not to oversell:
 
 ## Roadmap
 
-- **Phase 1** — `cast.db` adapter + duplicate-work / iteration-2 detector + reproducible proof.
-- **Phase 2** — full pathology coverage (ping-pong / livelock, deadlock, non-termination) + sensitivity controls.
-- **Phase 3** — counterfactual replay attribution ("which handoff was decisive").
+- **Phase 1** — **(SHIPPED)** `cast.db` adapter + duplicate-work / iteration-2 detector + reproducible proof.
+- **Phase 2** — **(SHIPPED)** full pathology coverage (ping-pong / livelock, deadlock, non-termination) + sensitivity controls.
+- **Phase 3** — **(SHIPPED)** counterfactual replay attribution ("which handoff was decisive").
 - **Phase 4** — **(SHIPPED)** OpenTelemetry support: offline adapter (`OTelSpanAdapter` ingesting flat span dicts, OTLP/JSON, JSONL exports) and live `LooptripSpanProcessor` (in-flight pathology detection via `on_start` hooks, thread-safe, deduped) in the `looptrip[otel]` extra. Unit and synthetic testing complete; production multi-agent validation pending.
-- **Phase 5** — packaging (Claude Code plugin, Homebrew).
-- **Phase 6** — documentation (reference deep-dives, examples, architecture notes).
-- **Phase 7** — OpenTelemetry GenAI agent-observability semantic-convention engagement: adopt the upstream `gen_ai.agent.handoff.*` handoff identity (`semantic-conventions-genai`) and contribute the pathology layer — a pending/blocking wait-for state and loop-termination (`gen_ai.agent.finish_reason`) semantics — with looptrip as the deterministic reference implementation.
-- **Phase 8** — launch.
+- **Phase 5** — **(SHIPPED)** packaging (Claude Code plugin, Homebrew).
+- **Phase 6** — **(SHIPPED)** documentation (reference deep-dives, examples, architecture notes).
+- **Phase 7** — **(repo work merged; upstream engagement in progress)** OpenTelemetry GenAI agent-observability semantic-convention engagement: adopt the upstream `gen_ai.agent.handoff.*` handoff identity (`semantic-conventions-genai`) and contribute the pathology layer — a pending/blocking wait-for state and loop-termination (`gen_ai.agent.finish_reason`) semantics — with looptrip as the deterministic reference implementation.
+- **Phase 8** — **(in progress)** launch.
 
 ## Documentation
 

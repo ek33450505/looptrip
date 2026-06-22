@@ -32,7 +32,7 @@ Print the installed version and exit.
 
 ```bash
 $ looptrip --version
-looptrip 0.1.0
+looptrip 0.1.1
 ```
 
 Exit code: **0**
@@ -101,6 +101,10 @@ non_termination       test-writer                       113              93     
 duplicate_work        workflow-subagent                  54              52         $320.16
 ping_pong             bash-specialist                     3              30           $5.86
 duplicate_work        bash-specialist                    14              12           $5.41
+ping_pong             bash-specialist                     5              20           $5.29
+ping_pong             bash-specialist                     4              12           $2.05
+duplicate_work        commit                             20              11           $0.91
+ping_pong             code-reviewer                       2               3           $0.27
 ```
 
 Exit code: **0**
