@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin.json",
+  "name": "looptrip",
+  "displayName": "looptrip — multi-agent coordination-pathology detector",
+  "version": "0.1.0",
+  "description": "Deterministic, framework-agnostic, zero-LLM detector of multi-agent coordination pathologies (duplicate-work, ping-pong/livelock, deadlock, non-termination) that trips at iteration 2. A read-only observer, never a gate.",
+  "author": { "name": "Edward Kubiak", "url": "https://github.com/ek33450505" },
+  "homepage": "https://github.com/ek33450505/looptrip",
+  "repository": "https://github.com/ek33450505/looptrip",
+  "license": "Apache-2.0",
+  "keywords": ["claude-code", "multi-agent", "observability", "opentelemetry", "coordination", "deadlock", "livelock", "detection"],
+  "defaultEnabled": false
+}

@@ -1,0 +1,14 @@
+{
+  "name": "looptrip",
+  "owner": { "name": "Edward Kubiak", "url": "https://github.com/ek33450505" },
+  "description": "looptrip — a local, deterministic, zero-LLM detector of multi-agent coordination pathologies for Claude Code.",
+  "plugins": [
+    {
+      "name": "looptrip",
+      "source": "./",
+      "description": "Trips at iteration 2 on duplicate-work, ping-pong/livelock, deadlock, and non-termination across cast.db and OpenTelemetry GenAI handoff spans. Read-only observer, never a gate; off by default.",
+      "license": "Apache-2.0",
+      "keywords": ["claude-code", "multi-agent", "observability", "coordination"]
+    }
+  ]
+}
