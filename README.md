@@ -4,7 +4,7 @@
 
 looptrip watches a multi-agent run as a stream of normalized events and flags the coordination pathologies that make agent systems burn money and spin: duplicate-work loops, ping-pong / livelock, deadlock, and non-termination. It is **detection-first** — it works over data you already have (OpenTelemetry GenAI spans, or a CAST `cast.db`) — and **deterministic / zero-LLM**: the same event stream always yields the same verdict. looptrip is an **observer, never a gate**; it reports, it never blocks.
 
-> **Phase 2 (this release)** ships full pathology coverage (duplicate-work, ping-pong / livelock, deadlock, non-termination), configurable sensitivity controls, counterfactual-replay attribution (via the `attribute` subcommand), and the `cast.db` adapter with reproducible proof on real data. **Phase 4 ships OpenTelemetry support** — an offline adapter (`OTelSpanAdapter` from flat span dicts and OTLP/JSON exports) plus a live `LooptripSpanProcessor` for in-flight detection, available in the `looptrip[otel]` extra.
+> **This release (0.1.0)** ships full pathology coverage (duplicate-work, ping-pong / livelock, deadlock, non-termination), configurable sensitivity controls, counterfactual-replay attribution (via the `attribute` subcommand), and the `cast.db` adapter with reproducible proof on real data — plus **OpenTelemetry support** (Phase 4): an offline adapter (`OTelSpanAdapter` from flat span dicts and OTLP/JSON exports) plus a live `LooptripSpanProcessor` for in-flight detection, available in the `looptrip[otel]` extra.
 
 ## The headline
 
