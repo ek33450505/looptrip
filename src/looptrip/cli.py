@@ -12,6 +12,10 @@ Stdlib ``argparse`` only. One top-level flag plus three subcommands:
                                       hermetic fixture (no cast.db).
                                     - ``cast-db:<session_id>`` - the live
                                       cast.db (requires the real database).
+                                    - ``otel:<path>`` - OTel GenAI span JSON
+                                      or JSONL file.  For multi-scenario flat
+                                      fixtures append ``#<scenario>`` to select
+                                      a scenario (e.g. ``otel:spans.json#deadlock``).
                                   Detector flags (mutually exclusive):
                                     - ``--all`` - run all four detectors.
                                     - ``--detectors LIST`` - comma-separated
@@ -31,12 +35,14 @@ and ``python -m looptrip`` both route through it. Stdlib-only, no global state.
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
 import sys
 from typing import List, Optional
 
 from looptrip import __version__
 from looptrip.adapters.cast_db import CastDbAdapter
+from looptrip.adapters.otel import OTelSpanAdapter
 from looptrip.attribution import attribute_all
 from looptrip.detector import detect
 from looptrip.detectors.types import ALL_DETECTORS
@@ -48,22 +54,34 @@ def _source_events(source: str) -> List[Event]:
     """Resolve a source string to a sorted event list.
 
     ``fixture:<id>`` builds an adapter from the packaged hermetic fixture;
-    ``cast-db:<id>`` queries the live database. Events are sorted by
-    ``(ts, raw_id)``. Raises :class:`ValueError` on a malformed or unknown
-    source so callers can surface a clean exit-2 error.
+    ``cast-db:<id>`` queries the live database; ``otel:<path>`` (or
+    ``otel:<path>#<scenario>``) loads OTel GenAI spans from a JSON or JSONL
+    file. Events are sorted by ``(ts, raw_id)``. Raises :class:`ValueError`
+    on a malformed or unknown source so callers can surface a clean exit-2
+    error.
     """
-    scheme, sep, session_id = source.partition(":")
-    if not sep or not session_id:
+    scheme, sep, rest = source.partition(":")
+    if not sep or not rest:
         raise ValueError(
-            f"malformed source {source!r}; expected 'fixture:<id>' or 'cast-db:<id>'"
+            f"malformed source {source!r}; expected 'fixture:<id>', "
+            f"'cast-db:<id>', or 'otel:<path>[#scenario]'"
         )
     if scheme == "fixture":
-        adapter: CastDbAdapter = CastDbAdapter.from_fixture(session_id)
+        adapter: CastDbAdapter = CastDbAdapter.from_fixture(rest)
     elif scheme == "cast-db":
-        adapter = CastDbAdapter(session_id)
+        adapter = CastDbAdapter(rest)
+    elif scheme == "otel":
+        path, _sep, scenario = rest.partition("#")
+        if path.endswith(".jsonl"):
+            if scenario:
+                raise ValueError("scenario selection is not supported for JSONL sources")
+            otel_adapter = OTelSpanAdapter.from_jsonl_file(path)
+        else:
+            otel_adapter = OTelSpanAdapter.from_json_file(path, scenario or None)
+        return sorted(otel_adapter.events(), key=lambda event: (event.ts or "", event.raw_id or ""))
     else:
         raise ValueError(
-            f"unknown source scheme {scheme!r}; expected 'fixture' or 'cast-db'"
+            f"unknown source scheme {scheme!r}; expected 'fixture', 'cast-db', or 'otel'"
         )
     return sorted(adapter.events(), key=lambda event: (event.ts, event.raw_id))
 
@@ -121,7 +139,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     try:
         events = _source_events(args.source)
-    except (ValueError, ModuleNotFoundError, ImportError, sqlite3.Error) as exc:
+    except (ValueError, ModuleNotFoundError, ImportError, sqlite3.Error,
+            FileNotFoundError, OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -186,7 +205,8 @@ def _cmd_attribute(args: argparse.Namespace) -> int:
 
     try:
         events = _source_events(args.source)
-    except (ValueError, ModuleNotFoundError, ImportError, sqlite3.Error) as exc:
+    except (ValueError, ModuleNotFoundError, ImportError, sqlite3.Error,
+            FileNotFoundError, OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -235,7 +255,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan.add_argument(
         "source",
-        help="event source: 'fixture:<session_id>' or 'cast-db:<session_id>'",
+        help=(
+            "event source: 'fixture:<session_id>', 'cast-db:<session_id>', "
+            "or 'otel:<path>[#scenario]' (OTel GenAI span JSON/JSONL file)"
+        ),
     )
     scan_group = scan.add_mutually_exclusive_group()
     scan_group.add_argument(
@@ -264,7 +287,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     attr.add_argument(
         "source",
-        help="event source: 'fixture:<session_id>' or 'cast-db:<session_id>'",
+        help=(
+            "event source: 'fixture:<session_id>', 'cast-db:<session_id>', "
+            "or 'otel:<path>[#scenario]' (OTel GenAI span JSON/JSONL file)"
+        ),
     )
     attr_group = attr.add_mutually_exclusive_group()
     attr_group.add_argument(

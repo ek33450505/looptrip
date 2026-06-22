@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Phase 4a
+
+### Added
+
+- **OTelSpanAdapter:** Shipped offline OTel GenAI span adapter (`src/looptrip/adapters/otel.py`).
+  Ingests flat span dicts, real OTLP/JSON exports, and JSONL files via three factory methods
+  (`from_json_file`, `from_jsonl_file`, `from_otlp_file`).  Auto-detects input shape from
+  `resourceSpans`, `scenarios`, or `spans` keys.
+- **`_normalize_otlp`:** Flattens real OTLP/JSON `resourceSpans` exports including resource-level
+  attribute inheritance, `startTimeUnixNano` → ISO-8601 UTC conversion, and typed attribute decoding.
+- **`otel:` CLI source:** `looptrip scan` and `looptrip attribute` now accept `otel:<path>` and
+  `otel:<path>#<scenario>` sources, including JSONL (`otel:<path>.jsonl`).  Bad file paths exit 2
+  cleanly with no traceback.
+- **OTLP fixture:** `tests/fixtures/otel_genai_handoff_spans_otlp.json` — synthetic OTLP-shaped
+  fixture encoding all three reference scenarios (deadlock, ping_pong, control) with
+  `startTimeUnixNano` values that round-trip to the exact ISO timestamps in the flat fixture.
+- **Reference test wired to shipped code:** `tests/test_otel_handoff_reference.py` now imports
+  `span_to_event` from `looptrip.adapters.otel` (the local `otel_span_to_event` function has been
+  removed).  All 16 reference tests exercise the shipped mapper.
+
 ## [Unreleased] — Phase 2
 
 ### Added

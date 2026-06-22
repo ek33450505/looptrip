@@ -1,0 +1,288 @@
+{
+  "_description": "Synthetic OTLP/JSON-shaped OTel GenAI handoff spans for looptrip adapter tests. Each top-level scenario key maps to a full {'resourceSpans':[...]} doc that can be passed directly to OTelSpanAdapter.from_otlp_file or OTelSpanAdapter.from_json_file (auto-detect via 'resourceSpans' key). The three scenarios encode the SAME events as the flat fixture (otel_genai_handoff_spans.json) so the OTLP<->flat equivalence cross-check in test_otel_adapter.py can pin _normalize_otlp against the trusted flat mapping.",
+  "_attribute_provenance": {
+    "gen_ai.agent.handoff.source.name": "semantic-conventions-genai PR #98 (adopted verbatim) — the agent performing the handoff",
+    "gen_ai.agent.handoff.target.name": "semantic-conventions-genai PR #98 (adopted verbatim) — the agent receiving the handoff",
+    "gen_ai.agent.handoff.state": "looptrip-PROPOSED enum (pending upstream) — PR #98 models a COMPLETED transfer only. PENDING values ('blocked', 'waiting') signal a wait-for edge; ACTIVE values ('in_progress') represent a live transfer in motion.",
+    "gen_ai.operation.name": "semantic-conventions-genai, value 'execute_tool'"
+  },
+  "_synthetic": "Hand-authored OTLP-shaped fixture, NOT a live capture. startTimeUnixNano values are chosen so _normalize_otlp round-trips to the exact ISO timestamps in the flat fixture (e.g. 1717200001000000000 -> '2024-06-01T00:00:01Z'). Live OTLP capture via SpanProcessor is Phase 4b.",
+  "deadlock": {
+    "resourceSpans": [
+      {
+        "resource": {
+          "attributes": []
+        },
+        "scopeSpans": [
+          {
+            "scope": {
+              "name": "looptrip-synthetic"
+            },
+            "spans": [
+              {
+                "spanId": "0000000000000001",
+                "traceId": "00000000000000000000000000000000",
+                "name": "agent.handoff",
+                "startTimeUnixNano": "1717200001000000000",
+                "attributes": [
+                  {
+                    "key": "gen_ai.operation.name",
+                    "value": {"stringValue": "execute_tool"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.source.name",
+                    "value": {"stringValue": "code-writer"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.target.name",
+                    "value": {"stringValue": "code-reviewer"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.state",
+                    "value": {"stringValue": "blocked"}
+                  }
+                ]
+              },
+              {
+                "spanId": "0000000000000002",
+                "traceId": "00000000000000000000000000000000",
+                "name": "agent.handoff",
+                "startTimeUnixNano": "1717200002000000000",
+                "attributes": [
+                  {
+                    "key": "gen_ai.operation.name",
+                    "value": {"stringValue": "execute_tool"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.source.name",
+                    "value": {"stringValue": "code-reviewer"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.target.name",
+                    "value": {"stringValue": "code-writer"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.state",
+                    "value": {"stringValue": "blocked"}
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "ping_pong": {
+    "resourceSpans": [
+      {
+        "resource": {
+          "attributes": []
+        },
+        "scopeSpans": [
+          {
+            "scope": {
+              "name": "looptrip-synthetic"
+            },
+            "spans": [
+              {
+                "spanId": "0000000000000010",
+                "traceId": "00000000000000000000000000000001",
+                "name": "agent.handoff",
+                "startTimeUnixNano": "1717200060000000000",
+                "attributes": [
+                  {
+                    "key": "gen_ai.operation.name",
+                    "value": {"stringValue": "execute_tool"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.source.name",
+                    "value": {"stringValue": "planner"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.target.name",
+                    "value": {"stringValue": "code-writer"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.state",
+                    "value": {"stringValue": "in_progress"}
+                  }
+                ]
+              },
+              {
+                "spanId": "0000000000000011",
+                "traceId": "00000000000000000000000000000001",
+                "name": "agent.handoff",
+                "startTimeUnixNano": "1717200061000000000",
+                "attributes": [
+                  {
+                    "key": "gen_ai.operation.name",
+                    "value": {"stringValue": "execute_tool"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.source.name",
+                    "value": {"stringValue": "code-writer"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.target.name",
+                    "value": {"stringValue": "planner"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.state",
+                    "value": {"stringValue": "in_progress"}
+                  }
+                ]
+              },
+              {
+                "spanId": "0000000000000012",
+                "traceId": "00000000000000000000000000000001",
+                "name": "agent.handoff",
+                "startTimeUnixNano": "1717200062000000000",
+                "attributes": [
+                  {
+                    "key": "gen_ai.operation.name",
+                    "value": {"stringValue": "execute_tool"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.source.name",
+                    "value": {"stringValue": "planner"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.target.name",
+                    "value": {"stringValue": "code-writer"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.state",
+                    "value": {"stringValue": "in_progress"}
+                  }
+                ]
+              },
+              {
+                "spanId": "0000000000000013",
+                "traceId": "00000000000000000000000000000001",
+                "name": "agent.handoff",
+                "startTimeUnixNano": "1717200063000000000",
+                "attributes": [
+                  {
+                    "key": "gen_ai.operation.name",
+                    "value": {"stringValue": "execute_tool"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.source.name",
+                    "value": {"stringValue": "code-writer"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.target.name",
+                    "value": {"stringValue": "planner"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.state",
+                    "value": {"stringValue": "in_progress"}
+                  }
+                ]
+              },
+              {
+                "spanId": "0000000000000014",
+                "traceId": "00000000000000000000000000000001",
+                "name": "agent.handoff",
+                "startTimeUnixNano": "1717200064000000000",
+                "attributes": [
+                  {
+                    "key": "gen_ai.operation.name",
+                    "value": {"stringValue": "execute_tool"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.source.name",
+                    "value": {"stringValue": "planner"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.target.name",
+                    "value": {"stringValue": "code-writer"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.state",
+                    "value": {"stringValue": "in_progress"}
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "control": {
+    "resourceSpans": [
+      {
+        "resource": {
+          "attributes": []
+        },
+        "scopeSpans": [
+          {
+            "scope": {
+              "name": "looptrip-synthetic"
+            },
+            "spans": [
+              {
+                "spanId": "0000000000000020",
+                "traceId": "00000000000000000000000000000002",
+                "name": "agent.handoff",
+                "startTimeUnixNano": "1717200120000000000",
+                "attributes": [
+                  {
+                    "key": "gen_ai.operation.name",
+                    "value": {"stringValue": "execute_tool"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.source.name",
+                    "value": {"stringValue": "agent-alpha"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.target.name",
+                    "value": {"stringValue": "agent-beta"}
+                  }
+                ]
+              },
+              {
+                "spanId": "0000000000000021",
+                "traceId": "00000000000000000000000000000002",
+                "name": "agent.handoff",
+                "startTimeUnixNano": "1717200121000000000",
+                "attributes": [
+                  {
+                    "key": "gen_ai.operation.name",
+                    "value": {"stringValue": "execute_tool"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.source.name",
+                    "value": {"stringValue": "agent-beta"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.target.name",
+                    "value": {"stringValue": "agent-gamma"}
+                  }
+                ]
+              },
+              {
+                "spanId": "0000000000000022",
+                "traceId": "00000000000000000000000000000002",
+                "name": "agent.handoff",
+                "startTimeUnixNano": "1717200122000000000",
+                "attributes": [
+                  {
+                    "key": "gen_ai.operation.name",
+                    "value": {"stringValue": "execute_tool"}
+                  },
+                  {
+                    "key": "gen_ai.agent.handoff.source.name",
+                    "value": {"stringValue": "agent-gamma"}
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -26,8 +26,8 @@ from __future__ import annotations
 
 import json
 import pathlib
-from typing import Any, Dict, Optional
 
+from looptrip.adapters.otel import span_to_event as otel_span_to_event
 from looptrip.detector import (
     KIND_DEADLOCK,
     KIND_PING_PONG,
@@ -47,101 +47,11 @@ _FIXTURE = (
 
 
 # ---------------------------------------------------------------------------
-# OTel-span → Event reference mapping
-# ---------------------------------------------------------------------------
-
-
-def otel_span_to_event(span: Dict[str, Any]) -> Event:
-    """Map one synthetic OTel GenAI handoff span to a looptrip :class:`Event`.
-
-    Attribute provenance
-    --------------------
-    ``gen_ai.agent.handoff.source.name``
-        Adopted verbatim from semantic-conventions-genai PR #98.
-        The agent performing the handoff → ``Event.agent``.
-
-    ``gen_ai.agent.handoff.target.name``
-        Adopted verbatim from semantic-conventions-genai PR #98.
-        The agent receiving the handoff.  Mapped DIRECTLY onto the explicit
-        ``Event.to_agent`` field — no string composition.
-
-    ``gen_ai.agent.handoff.state``
-        **looptrip-proposed enum** — not yet upstream.  PR #98 only models a
-        *completed* transfer.  This attribute distinguishes two operational
-        semantics:
-
-        * **PENDING values** (``"blocked"``, ``"waiting"``) — the source agent
-          is waiting for the target; the transfer has not yet occurred.  These
-          match looptrip's default ``blocked_states`` vocabulary and feed the
-          deadlock detector's wait-for graph.
-        * **ACTIVE values** (``"in_progress"``) — the source agent is actively
-          handing off completed work; the transfer is live.  ``Event.to_agent``
-          still names the hop target (enabling ping-pong handoff-edge
-          detection) but the bare state token does NOT match ``blocked_states``,
-          so the deadlock detector ignores these events entirely.
-
-        The PENDING vs ACTIVE distinction is load-bearing: a livelock
-        (ping-pong) is agents *actively bouncing* work — not blocked-waiting.
-
-    Explicit-field mapping
-    ----------------------
-    The two OTel attributes map onto two SEPARATE explicit ``Event`` fields —
-    there is no packed ``"state on target"`` string anymore:
-
-    * ``gen_ai.agent.handoff.state`` → ``Event.handoff_state`` (the bare token).
-    * ``gen_ai.agent.handoff.target.name`` → ``Event.to_agent`` (the target).
-
-    Detectors read ``event.handoff_state`` (via
-    :func:`~looptrip.detectors._shared._is_blocked`) and ``event.to_agent``
-    directly — no delimiter scanning.
-
-    When ``gen_ai.agent.handoff.state`` is present but the target is absent,
-    ``to_agent`` is ``None``.  When ``gen_ai.agent.handoff.state`` is absent
-    (e.g. a completed transfer as in the CONTROL scenario) BOTH
-    ``handoff_state`` and ``to_agent`` are ``None``, leaving the deadlock
-    blocked-map empty and the ping-pong handoff-edge substrate inert.
-
-    Args:
-        span: A dict with keys ``span_id``, ``start_time``, and
-              ``attributes`` (itself a flat dict of OTel attribute strings).
-
-    Returns:
-        A frozen :class:`~looptrip.normalize.Event`.
-    """
-    attrs: Dict[str, Any] = span.get("attributes", {})
-
-    agent: str = attrs["gen_ai.agent.handoff.source.name"]
-    tool: str = attrs.get("gen_ai.operation.name", "dispatch")
-    ts: str = span["start_time"]
-    raw_id: str = span["span_id"]
-
-    state: Optional[str] = attrs.get("gen_ai.agent.handoff.state")
-    target: Optional[str] = attrs.get("gen_ai.agent.handoff.target.name")
-
-    if state:
-        handoff_state: Optional[str] = state
-        to_agent: Optional[str] = target
-    else:
-        handoff_state = None
-        to_agent = None
-
-    return Event(
-        agent=agent,
-        tool=tool,
-        args_hash=None,
-        ts=ts,
-        handoff_state=handoff_state,
-        to_agent=to_agent,
-        raw_id=raw_id,
-    )
-
-
-# ---------------------------------------------------------------------------
 # Fixture loader helpers
 # ---------------------------------------------------------------------------
 
 
-def _load_fixture() -> Dict[str, Any]:
+def _load_fixture() -> dict:
     with _FIXTURE.open() as f:
         return json.load(f)
 
