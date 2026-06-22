@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in looptrip, please report it privately to `[INSERT SECURITY CONTACT]` rather than using the public issue tracker. We appreciate your responsible disclosure and will work with you to address the issue promptly.
+If you discover a security vulnerability in looptrip, please report it privately to `edward.kubiak.dev@gmail.com` rather than using the public issue tracker. We appreciate your responsible disclosure and will work with you to address the issue promptly.
 
 ## Supported Versions
 

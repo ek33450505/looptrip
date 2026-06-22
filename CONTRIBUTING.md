@@ -65,7 +65,7 @@ All contributions are licensed under Apache-2.0. By submitting a PR, you agree t
 
 ## Code of Conduct
 
-This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). Please report violations to [INSERT CONTACT].
+This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). Please report violations to edward.kubiak.dev@gmail.com.
 
 ## Questions?
 

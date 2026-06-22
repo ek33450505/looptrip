@@ -10,6 +10,6 @@ looptrip adopts the [Contributor Covenant v2.1](https://www.contributor-covenant
 
 ## Reporting
 
-If you witness or experience a violation of this code of conduct, please report it to `[INSERT CONTACT]`.
+If you witness or experience a violation of this code of conduct, please report it to `edward.kubiak.dev@gmail.com`.
 
 All reports will be treated with confidentiality and care.
