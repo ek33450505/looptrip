@@ -6,7 +6,7 @@ the pathology detectors never have to know where their input came from.
 
 The schema, in field order, is::
 
-    (agent, tool, args_hash, ts, handoff_state, input_tokens,
+    (agent, tool, args_hash, ts, handoff_state, to_agent, input_tokens,
      cost_usd, progress, raw_id)
 
 Detection keys off the ``signature() == (agent, tool, args_hash)`` triple plus
@@ -57,6 +57,11 @@ class Event:
         handoff_state: Parsed ``## Handoff`` state — enrichment only; ``None``
                        for STATUS_CONTRACT_EXEMPT agents. Never required for
                        detection.
+        to_agent:      Explicit handoff target agent — enrichment only; ``None``
+                       when absent. Maps from
+                       ``gen_ai.agent.handoff.target.name``. NOT part of
+                       :meth:`signature`; detectors read it directly with no
+                       delimiter scanning.
         input_tokens:  Prompt-token count for the action, if known.
         cost_usd:      Cost of the action in USD, if known. Used at full
                        precision for prevented-waste accounting; rounded only
@@ -73,6 +78,7 @@ class Event:
     args_hash: Optional[str]
     ts: str
     handoff_state: Optional[str] = None
+    to_agent: Optional[str] = None
     input_tokens: Optional[int] = None
     cost_usd: Optional[float] = None
     progress: bool = False
@@ -112,3 +118,41 @@ def args_hash_from(*parts: str) -> str:
     """
     joined = "|".join(parts)
     return hashlib.sha1(joined.encode("utf-8")).hexdigest()
+
+
+def split_handoff_state(s: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Split a LEGACY packed ``"state on target"`` string into ``(state, target)``.
+
+    First-class adapters (cast.db, OTel) set ``handoff_state`` and ``to_agent``
+    directly — they never need this. This helper exists ONLY for ingesting a
+    legacy / human-pasted ``"state on target"`` corpus where the two values were
+    packed into a single string.
+
+    The split is a SIMPLE single-delimiter splitter: it splits on the FIRST
+    case-insensitive ``" on "`` into ``(state, target)``, each ``.strip()``'d
+    (an empty result becomes ``None``). When ``s`` is falsy or contains no
+    ``" on "``, returns ``(s or None, None)``.
+
+    This deliberately does NOT port the old four-delimiter machinery
+    (``=`` / ``:`` / ``" on "`` / ``" to "``); that brittleness is exactly what
+    the explicit ``to_agent`` field retires.
+
+    Args:
+        s: The legacy packed string to split, or ``None``.
+
+    Returns:
+        A 2-tuple ``(state, target)`` where each element is the stripped text or
+        ``None`` when absent.
+    """
+    if not s:
+        return (None, None)
+
+    lower = s.lower()
+    idx = lower.find(" on ")
+    if idx == -1:
+        state = s.strip()
+        return (state or None, None)
+
+    state = s[:idx].strip()
+    target = s[idx + len(" on "):].strip()
+    return (state or None, target or None)

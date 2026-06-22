@@ -3,7 +3,7 @@
   "_attribute_provenance": {
     "gen_ai.agent.handoff.source.name": "semantic-conventions-genai PR #98 (adopted verbatim) — the agent performing the handoff",
     "gen_ai.agent.handoff.target.name": "semantic-conventions-genai PR #98 (adopted verbatim) — the agent receiving the handoff",
-    "gen_ai.agent.handoff.state": "looptrip-PROPOSED enum (pending upstream) — PR #98 models a COMPLETED transfer only. PENDING values ('blocked', 'waiting') signal a wait-for edge; they match looptrip's blocked_states vocabulary and feed the deadlock detector. ACTIVE values ('in_progress') represent a live transfer in motion; _parse_target can still extract the hop target (enabling ping-pong handoff-edge detection) but these values do NOT match blocked_states, so the deadlock detector ignores them. The PENDING vs ACTIVE distinction is load-bearing for the deadlock-vs-ping-pong separation.",
+    "gen_ai.agent.handoff.state": "looptrip-PROPOSED enum (pending upstream) — PR #98 models a COMPLETED transfer only. PENDING values ('blocked', 'waiting') signal a wait-for edge; they match looptrip's blocked_states vocabulary and feed the deadlock detector. ACTIVE values ('in_progress') represent a live transfer in motion; the mapper sets to_agent from gen_ai.agent.handoff.target.name (enabling ping-pong handoff-edge detection) but these values do NOT match blocked_states, so the deadlock detector ignores them. The PENDING vs ACTIVE distinction is load-bearing for the deadlock-vs-ping-pong separation.",
     "gen_ai.operation.name": "semantic-conventions-genai, value 'execute_tool'"
   },
   "scenarios": {
@@ -36,7 +36,7 @@
     "ping_pong": {
       "_label": "(b) PING-PONG — planner and code-writer actively bounce completed work to each other (planner→code-writer→planner→…) with no net progress; directed cycle closes twice",
       "_expected": "detect_ping_pong(use_handoff_edges=True) fires; detect_deadlock() returns [] (livelock is NOT a deadlock — agents are active, not blocked-waiting)",
-      "_note": "state='in_progress' is an ACTIVE transfer: _parse_target extracts the hop target for handoff-edge detection, but the leading word 'in_progress' does not match blocked_states so detect_deadlock ignores these events entirely.",
+      "_note": "state='in_progress' is an ACTIVE transfer: the mapper sets to_agent from gen_ai.agent.handoff.target.name (enabling handoff-edge detection), but the bare token 'in_progress' does not match blocked_states so detect_deadlock ignores these events entirely.",
       "spans": [
         {
           "span_id": "span-pp-001",

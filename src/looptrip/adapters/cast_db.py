@@ -104,8 +104,9 @@ class CastDbAdapter(Adapter):
         rows are deterministic even if not pre-sorted; the live query also
         orders server-side. Rows with ``started_at=None`` sort before any
         string timestamp (null-first, matching SQLite NULL ordering). Each row
-        becomes one ``tool="dispatch"`` event with ``args_hash=None`` and
-        ``handoff_state=None`` — see the module docstring.
+        becomes one ``tool="dispatch"`` event with ``args_hash=None``,
+        ``handoff_state=None``, and ``to_agent=None`` — see the module
+        docstring.
         """
         for row in self._ordered_rows():
             yield Event(
@@ -114,6 +115,7 @@ class CastDbAdapter(Adapter):
                 args_hash=None,
                 ts=row["started_at"],
                 handoff_state=None,
+                to_agent=None,
                 input_tokens=row["input_tokens"],
                 cost_usd=row["cost_usd"],
                 progress=False,

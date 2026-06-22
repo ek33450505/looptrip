@@ -162,8 +162,10 @@ the real upstream attribute keys from PR #98. Three labelled scenarios:
 
 **`tests/test_otel_handoff_reference.py`** — 16 tests across mapping, all three scenarios, and fixture integrity:
 
-- Mapping correctness: `otel_span_to_event()` produces the correct `handoff_state`
-  encoding for each state value (blocked, waiting, in_progress, absent).
+- Mapping correctness: `otel_span_to_event()` sets `handoff_state` (the bare state
+  token) and `to_agent` (`gen_ai.agent.handoff.target.name`) as two SEPARATE fields —
+  no `f"{state} on {target}"` composition — for each state value (blocked, waiting,
+  in_progress, absent).
 - Scenario (a): `detect_deadlock()` fires once; `blocked_agents ==
   {"code-writer", "code-reviewer"}`; `detect_ping_pong()` returns `[]`.
 - Scenario (b): `detect_ping_pong(use_handoff_edges=True)` fires once at `trip_index=2`;

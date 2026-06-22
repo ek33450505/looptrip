@@ -205,7 +205,7 @@ Directed-cycle closures in the temporal agent sequence (e.g., A→B→A→B with
 
 #### 3. `deadlock` (Phase 2)
 
-Mutually-blocked agents forming a directed wait-for cycle. Requires `handoff_state` (blocked-state tokens) in events; returns empty when `handoff_state` is absent everywhere.
+Mutually-blocked agents forming a directed wait-for cycle. Requires a bare `handoff_state` blocked-state token plus an explicit `to_agent` target in events; returns empty when `handoff_state` is absent everywhere.
 
 #### 4. `non_termination` (Phase 2)
 
@@ -265,7 +265,8 @@ Event(
     input_tokens: Optional[int] = None,  # Input token count
     cost_usd: Optional[float] = None,    # Cost of this event
     progress: bool = False,              # Progress flag
-    handoff_state: Optional[str] = None, # Handoff status (for deadlock detection)
+    handoff_state: Optional[str] = None, # Bare handoff state token (e.g. "blocked"); never packed
+    to_agent: Optional[str] = None,      # Explicit handoff target agent (for deadlock detection)
     raw_id: Optional[int] = None,        # Original row ID
 )
 ```

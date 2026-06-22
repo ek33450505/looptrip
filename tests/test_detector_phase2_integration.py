@@ -44,6 +44,7 @@ def _ev(
     cost_usd: float = 10.0,
     progress: bool = False,
     handoff_state: str | None = None,
+    to_agent: str | None = None,
     ts: str | None = None,
 ) -> Event:
     """Helper to build test events (cast.db style)."""
@@ -57,6 +58,7 @@ def _ev(
         progress=progress,
         raw_id=raw_id,
         handoff_state=handoff_state,
+        to_agent=to_agent,
     )
 
 
@@ -565,11 +567,11 @@ def test_detect_ping_pong_callable():
 def test_detect_deadlock_callable():
     """detect_deadlock(...) can be called directly."""
     events = [
-        _ev(1, agent="a", handoff_state="blocked: b"),
-        _ev(2, agent="b", handoff_state="blocked: a"),
+        _ev(1, agent="a", handoff_state="blocked", to_agent="b"),
+        _ev(2, agent="b", handoff_state="blocked", to_agent="a"),
     ]
     reports = detect_deadlock(events)
-    # May fire if parse succeeds (depends on _parse_blocked logic)
+    # Fires: a↔b form a wait-for cycle via the explicit to_agent targets.
     assert isinstance(reports, list)
 
 

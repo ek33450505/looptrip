@@ -62,7 +62,8 @@ def otel_span_to_event(span: Dict[str, Any]) -> Event:
 
     ``gen_ai.agent.handoff.target.name``
         Adopted verbatim from semantic-conventions-genai PR #98.
-        The agent receiving the handoff.  Used to compose ``handoff_state``.
+        The agent receiving the handoff.  Mapped DIRECTLY onto the explicit
+        ``Event.to_agent`` field — no string composition.
 
     ``gen_ai.agent.handoff.state``
         **looptrip-proposed enum** — not yet upstream.  PR #98 only models a
@@ -74,29 +75,31 @@ def otel_span_to_event(span: Dict[str, Any]) -> Event:
           match looptrip's default ``blocked_states`` vocabulary and feed the
           deadlock detector's wait-for graph.
         * **ACTIVE values** (``"in_progress"``) — the source agent is actively
-          handing off completed work; the transfer is live.  ``_parse_target``
-          still extracts the hop target (enabling ping-pong handoff-edge
-          detection) but the leading word does NOT match ``blocked_states``, so
-          the deadlock detector ignores these events entirely.
+          handing off completed work; the transfer is live.  ``Event.to_agent``
+          still names the hop target (enabling ping-pong handoff-edge
+          detection) but the bare state token does NOT match ``blocked_states``,
+          so the deadlock detector ignores these events entirely.
 
         The PENDING vs ACTIVE distinction is load-bearing: a livelock
         (ping-pong) is agents *actively bouncing* work — not blocked-waiting.
 
-    ``handoff_state`` composition
-    ------------------------------
-    When both ``gen_ai.agent.handoff.state`` and
-    ``gen_ai.agent.handoff.target.name`` are present the two are joined as::
+    Explicit-field mapping
+    ----------------------
+    The two OTel attributes map onto two SEPARATE explicit ``Event`` fields —
+    there is no packed ``"state on target"`` string anymore:
 
-        handoff_state = f"{state} on {target}"
+    * ``gen_ai.agent.handoff.state`` → ``Event.handoff_state`` (the bare token).
+    * ``gen_ai.agent.handoff.target.name`` → ``Event.to_agent`` (the target).
 
-    This encoding is the exact format the existing
-    :func:`~looptrip.detectors._shared._parse_blocked` /
-    :func:`~looptrip.detectors._shared._parse_target` parsers expect, so the
-    blocked-state and target-agent are both recoverable from a single string.
+    Detectors read ``event.handoff_state`` (via
+    :func:`~looptrip.detectors._shared._is_blocked`) and ``event.to_agent``
+    directly — no delimiter scanning.
 
-    When ``gen_ai.agent.handoff.state`` is absent (e.g. a completed transfer
-    as in the CONTROL scenario) ``handoff_state`` is ``None``, leaving the
-    deadlock blocked-map empty and the ping-pong handoff-edge substrate inert.
+    When ``gen_ai.agent.handoff.state`` is present but the target is absent,
+    ``to_agent`` is ``None``.  When ``gen_ai.agent.handoff.state`` is absent
+    (e.g. a completed transfer as in the CONTROL scenario) BOTH
+    ``handoff_state`` and ``to_agent`` are ``None``, leaving the deadlock
+    blocked-map empty and the ping-pong handoff-edge substrate inert.
 
     Args:
         span: A dict with keys ``span_id``, ``start_time``, and
@@ -115,12 +118,12 @@ def otel_span_to_event(span: Dict[str, Any]) -> Event:
     state: Optional[str] = attrs.get("gen_ai.agent.handoff.state")
     target: Optional[str] = attrs.get("gen_ai.agent.handoff.target.name")
 
-    if state and target:
-        handoff_state: Optional[str] = f"{state} on {target}"
-    elif state:
-        handoff_state = state
+    if state:
+        handoff_state: Optional[str] = state
+        to_agent: Optional[str] = target
     else:
         handoff_state = None
+        to_agent = None
 
     return Event(
         agent=agent,
@@ -128,6 +131,7 @@ def otel_span_to_event(span: Dict[str, Any]) -> Event:
         args_hash=None,
         ts=ts,
         handoff_state=handoff_state,
+        to_agent=to_agent,
         raw_id=raw_id,
     )
 
@@ -153,8 +157,8 @@ def _events_for(scenario: str) -> list:
 # ---------------------------------------------------------------------------
 
 
-def test_mapping_blocked_state_with_target_composes_handoff_state():
-    """otel_span_to_event produces 'blocked on <target>' when state is present."""
+def test_mapping_blocked_state_with_target_sets_explicit_fields():
+    """otel_span_to_event sets handoff_state='blocked' and to_agent=<target>."""
     span = {
         "span_id": "test-span-01",
         "start_time": "2024-01-01T00:00:00Z",
@@ -166,14 +170,15 @@ def test_mapping_blocked_state_with_target_composes_handoff_state():
         },
     }
     event = otel_span_to_event(span)
-    assert event.handoff_state == "blocked on agent-b"
+    assert event.handoff_state == "blocked"
+    assert event.to_agent == "agent-b"
     assert event.agent == "agent-a"
     assert event.raw_id == "test-span-01"
     assert event.ts == "2024-01-01T00:00:00Z"
 
 
-def test_mapping_waiting_state_composes_handoff_state():
-    """otel_span_to_event produces 'waiting on <target>' when state='waiting'."""
+def test_mapping_waiting_state_sets_explicit_fields():
+    """otel_span_to_event sets handoff_state='waiting' and to_agent=<target>."""
     span = {
         "span_id": "test-span-02",
         "start_time": "2024-01-01T00:00:01Z",
@@ -185,11 +190,12 @@ def test_mapping_waiting_state_composes_handoff_state():
         },
     }
     event = otel_span_to_event(span)
-    assert event.handoff_state == "waiting on agent-y"
+    assert event.handoff_state == "waiting"
+    assert event.to_agent == "agent-y"
 
 
-def test_mapping_no_state_produces_none_handoff_state():
-    """otel_span_to_event produces handoff_state=None when gen_ai.agent.handoff.state absent."""
+def test_mapping_no_state_produces_none_handoff_state_and_to_agent():
+    """otel_span_to_event produces handoff_state=None AND to_agent=None when state absent."""
     span = {
         "span_id": "test-span-03",
         "start_time": "2024-01-01T00:00:02Z",
@@ -201,6 +207,7 @@ def test_mapping_no_state_produces_none_handoff_state():
     }
     event = otel_span_to_event(span)
     assert event.handoff_state is None
+    assert event.to_agent is None
 
 
 def test_mapping_hyphenated_agent_names_preserved():
@@ -217,15 +224,16 @@ def test_mapping_hyphenated_agent_names_preserved():
     }
     event = otel_span_to_event(span)
     assert event.agent == "code-writer"
-    assert event.handoff_state == "blocked on code-reviewer"
+    assert event.handoff_state == "blocked"
+    assert event.to_agent == "code-reviewer"
 
 
-def test_mapping_in_progress_state_composes_handoff_state():
-    """otel_span_to_event produces 'in_progress on <target>' for active transfers.
+def test_mapping_in_progress_state_sets_explicit_fields():
+    """otel_span_to_event sets handoff_state='in_progress' and to_agent for active transfers.
 
-    'in_progress' is an ACTIVE-transfer value: _parse_target can extract the
-    hop target for ping-pong handoff-edge mode, but it does NOT match
-    blocked_states so detect_deadlock ignores it.
+    'in_progress' is an ACTIVE-transfer value: ``to_agent`` still names the hop
+    target for ping-pong handoff-edge mode, but the bare 'in_progress' token does
+    NOT match blocked_states so detect_deadlock ignores it.
     """
     span = {
         "span_id": "test-span-05",
@@ -238,7 +246,8 @@ def test_mapping_in_progress_state_composes_handoff_state():
         },
     }
     event = otel_span_to_event(span)
-    assert event.handoff_state == "in_progress on code-writer"
+    assert event.handoff_state == "in_progress"
+    assert event.to_agent == "code-writer"
 
 
 # ---------------------------------------------------------------------------
@@ -364,9 +373,9 @@ def test_control_deadlock_returns_empty():
 def test_control_ping_pong_handoff_edge_returns_empty():
     """Scenario (c): clean linear handoff chain does NOT trip ping-pong (handoff-edge mode).
 
-    CONTROL spans have no gen_ai.agent.handoff.state, so handoff_state is None.
-    _parse_target(None) returns None, so no synthetic hop edges are inserted by the
-    handoff-edge substrate.  The temporal sequence (alpha→beta→gamma) is linear,
+    CONTROL spans have no gen_ai.agent.handoff.state, so both handoff_state and
+    to_agent are None.  With to_agent=None, no synthetic hop edges are inserted by
+    the handoff-edge substrate.  The temporal sequence (alpha→beta→gamma) is linear,
     with no repeated-node revisit → no cycle → [].
     """
     events = _events_for("control")
