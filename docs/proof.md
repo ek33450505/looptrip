@@ -69,11 +69,13 @@ Both the SHA-256 and byte length are pinned in tests (`tests/test_fixture_integr
 
 *Note: "kill-the-agent-at-trip" describes the counterfactual cost-accounting model for what an external orchestrator gate could have averted. looptrip itself is an observer — it reports pathologies, never blocks or kills agents.*
 
-**Trip**: The duplicate-work detector identifies the 2nd occurrence of an identical signature (same agent + tool + args hash) where:
+**Trip**: The duplicate-work detector identifies the 2nd occurrence of an identical `(agent, tool, args_hash)` signature where:
 - Input tokens fall within 5% variance of the immediately preceding dispatch, AND
 - No progress delta was recorded between them
 
-**Prevented waste**: Every dispatch from #3 onward is pure waste — the same work done by the same agent, again and again, with the same inputs and no net progress. If the detector trips at dispatch #2, all later dispatches (#3..#N) are averted.
+For cast.db every dispatch carries `tool="dispatch"` and `args_hash=None` (the source has no per-dispatch arguments column), so the signature collapses to the **agent identity** and the duplicate is confirmed by the token-proximity check above — not by hashing and matching the actual arguments.
+
+**Prevented waste**: If the detector trips at dispatch #2 and an external orchestrator gate acts on it, every later dispatch (#3..#N) by the same looping agent is averted. **The looped dispatches are not identical** — input-token counts and per-dispatch costs vary widely across each loop (`2e6c0288`: 22.4k–68.1k input tokens, \$2.85–\$21.69 per dispatch; `da27b414`: 19.8k–79.9k tokens, \$2.65–\$18.03 per dispatch). The agent is simply re-dispatched again and again with no terminating progress; only the *trip pair* (#1↔#2) is checked for ≤5% token proximity. The prevented amount is therefore the **real sum of the actual recorded `cost_usd`** values for dispatches #3..#N — not an extrapolation from a uniform per-dispatch cost.
 
 For session 2e6c0288:
 - Total workflow-subagent dispatches: 54
