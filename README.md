@@ -80,5 +80,3 @@ This project tries hard not to oversell:
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
-
-<sub>Developed under the internal codename "cyclops."</sub>
