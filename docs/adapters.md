@@ -132,8 +132,9 @@ See the full implementation: [`src/looptrip/adapters/cast_db.py`](../src/looptri
 
 `OTelSpanAdapter` in [`src/looptrip/adapters/otel.py`](../src/looptrip/adapters/otel.py) is the shipped offline OTel GenAI span adapter. It translates flat or real OTLP/JSON handoff spans into the normalized `Event` stream the detectors consume.
 
-> **Scope:** This adapter reads from files only. Live SpanProcessor ingestion
-> (streaming from an OTel Collector or SDK) is planned for Phase 4b.
+> **Scope:** This adapter reads from files only.  Live `SpanProcessor`
+> ingestion (streaming from the OTel SDK) is implemented in Phase 4b —
+> see [docs/otel-live.md](otel-live.md).
 
 ### Input shapes
 

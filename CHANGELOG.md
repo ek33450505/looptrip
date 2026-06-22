@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Phase 4b
+
+### Added
+
+- **`looptrip.otel_live` package:** Live OpenTelemetry SDK integration for
+  real-time pathology detection.  Requires the `[otel]` extra
+  (`opentelemetry-sdk`); the core `looptrip` package remains stdlib-only.
+  - `LooptripSpanProcessor` — a `SpanProcessor` that converts handoff spans
+    to `Event` objects and runs the configured detectors on each arrival.
+    Observer-never-a-gate: `on_start`/`on_end` never raise into the
+    application.  Thread-safe; de-duplicates pathology reports by fingerprint.
+  - `HandoffRecordingSampler` — a composable `Sampler` that forces
+    `RECORD_AND_SAMPLE` for any span carrying
+    `gen_ai.agent.handoff.source.name`, delegating all other spans to the
+    host application's existing sampler.
+  - `LooptripLogEmitter` — emits one OTel log record per detected pathology
+    (`event_name="looptrip.pathology"`, severity `WARN`, structured
+    attributes `looptrip.kind`, `looptrip.agent`, etc.).
+  - `readable_span_to_event` — low-level bridge from a live `ReadableSpan`
+    to a looptrip `Event`, reusing `span_to_event` so live and offline
+    ingestion paths are identical.
+- **`unix_nanos_to_iso` helper** extracted from `_normalize_otlp` as a
+  module-level function in `looptrip.adapters.otel` so that both offline
+  OTLP flattening and live span bridging share the identical nanosecond →
+  ISO-8601 UTC conversion logic.
+- **`docs/otel-live.md`:** Full documentation for live OTel instrumentation
+  including quick start, component API reference, design notes, and known
+  limitations.
+
 ## [Unreleased] — Phase 4a
 
 ### Added

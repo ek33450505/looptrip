@@ -46,6 +46,36 @@ from typing import Any, Dict, Iterator, List, Optional
 from looptrip.normalize import Adapter, Event
 
 
+def unix_nanos_to_iso(ns: int) -> str:
+    """Convert a Unix nanosecond timestamp to an ISO-8601 UTC string.
+
+    Whole-second values produce ``'%Y-%m-%dT%H:%M:%SZ'``; sub-second values
+    include a 9-digit fractional-seconds suffix to preserve full nanosecond
+    precision without floating-point rounding.
+
+    This helper is extracted here so that both the offline OTLP flattener
+    (:func:`_normalize_otlp`) and the live span bridge
+    (:mod:`looptrip.otel_live.bridge`) can share the identical conversion
+    logic — live and offline timestamps are therefore always produced by the
+    same code path.
+
+    Args:
+        ns: Unix timestamp in integer nanoseconds (e.g. from
+            ``startTimeUnixNano`` in an OTLP export, or from
+            ``ReadableSpan.start_time`` in the live SDK).
+
+    Returns:
+        ISO-8601 UTC string, e.g. ``'2024-06-01T00:00:01Z'`` (whole-second)
+        or ``'2024-06-01T00:00:01.500000000Z'`` (sub-second).
+    """
+    secs, rem = divmod(ns, 1_000_000_000)
+    dt = datetime.datetime.fromtimestamp(secs, tz=datetime.timezone.utc)
+    if rem == 0:
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Sub-second precision: integer formatting avoids float rounding.
+    return dt.strftime("%Y-%m-%dT%H:%M:%S") + f".{rem:09d}Z"
+
+
 def span_to_event(span: Dict[str, Any]) -> Event:
     """Map one flat OTel GenAI handoff span dict to a looptrip :class:`Event`.
 
@@ -435,14 +465,7 @@ def _normalize_otlp(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
 
                 # Convert startTimeUnixNano (int64 as string) → ISO-8601 UTC.
                 nano_str = span.get("startTimeUnixNano", "0")
-                ns = int(nano_str)
-                secs, rem = divmod(ns, 1_000_000_000)
-                dt = datetime.datetime.fromtimestamp(secs, tz=datetime.timezone.utc)
-                if rem == 0:
-                    start_time = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-                else:
-                    # Sub-second precision: integer formatting avoids float rounding.
-                    start_time = dt.strftime("%Y-%m-%dT%H:%M:%S") + f".{rem:09d}Z"
+                start_time = unix_nanos_to_iso(int(nano_str))
 
                 # Only include handoff spans — non-handoff spans (chat, tool, etc.)
                 # lack gen_ai.agent.handoff.source.name and are silently skipped.
