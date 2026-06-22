@@ -128,71 +128,138 @@ class CastDbAdapter(Adapter):
 
 See the full implementation: [`src/looptrip/adapters/cast_db.py`](../src/looptrip/adapters/cast_db.py).
 
-## OpenTelemetry GenAI Spans Adapter (Guidance)
+## OpenTelemetry GenAI Spans Adapter
 
-When bridging OTel `gen_ai.request` spans, map as follows:
+`OTelSpanAdapter` in [`src/looptrip/adapters/otel.py`](../src/looptrip/adapters/otel.py) is the shipped offline OTel GenAI span adapter. It translates flat or real OTLP/JSON handoff spans into the normalized `Event` stream the detectors consume.
 
-### Source: OTel GenAI Semantic Conventions
+> **Scope:** This adapter reads from files only. Live SpanProcessor ingestion
+> (streaming from an OTel Collector or SDK) is planned for Phase 4b.
 
-```python
-span = {
-    "attributes": {
-        "service.name": "my-workflow-agent",     # → Event.agent
-        "gen_ai.operation.name": "chat.create",  # → part of Event.tool
-        "gen_ai.request.temperature": 0.7,       # → part of Event.args_hash
-        "gen_ai.usage.input_tokens": 1024,       # → Event.input_tokens
-    },
-    "span_id": "abc123def456",                   # → Event.raw_id
-    "start_time": "2026-06-21T14:30:00Z",        # → Event.ts
+### Input shapes
+
+`OTelSpanAdapter` accepts three distinct JSON shapes via three factory methods:
+
+#### 1. Flat span dicts (looptrip native)
+
+Used by `tests/fixtures/otel_genai_handoff_spans.json` and for hand-authored test data:
+
+```json
+{
+  "span_id":    "span-dl-001",
+  "start_time": "2024-06-01T00:00:01Z",
+  "attributes": {
+    "gen_ai.operation.name":              "execute_tool",
+    "gen_ai.agent.handoff.source.name":   "code-writer",
+    "gen_ai.agent.handoff.target.name":   "code-reviewer",
+    "gen_ai.agent.handoff.state":         "blocked"
+  }
 }
 ```
 
-### Mapping Strategy
+#### 2. Real OTLP/JSON export
 
-```python
-from looptrip.normalize import Adapter, Event, args_hash_from
+The shape produced by an OTel SDK or Collector exporter:
 
-class OTelAdapter(Adapter):
-    def __init__(self, traces):
-        self.traces = traces
-
-    def events(self) -> Iterator[Event]:
-        for span in self._sorted_spans():
-            attrs = span["attributes"]
-            
-            # Construct a stable tool/args hash from operation + relevant parameters.
-            operation = attrs.get("gen_ai.operation.name", "unknown")
-            model = attrs.get("gen_ai.request.model", "")
-            temperature = attrs.get("gen_ai.request.temperature", "")
-            
-            tool = f"otel/{operation}"
-            args_parts = [model, str(temperature)]
-            args_hash = args_hash_from(*args_parts) if all(args_parts) else None
-            
-            # Bare state token and explicit target are two SEPARATE attributes —
-            # set them directly onto two separate fields, no packed string.
-            handoff_state = attrs.get("gen_ai.agent.handoff.state")  # bare token
-            to_agent = attrs.get("gen_ai.agent.handoff.target.name")  # explicit target
-            
-            yield Event(
-                agent=attrs.get("service.name", "unknown"),
-                tool=tool,
-                args_hash=args_hash,
-                ts=span["start_time"],
-                handoff_state=handoff_state,
-                to_agent=to_agent,
-                input_tokens=attrs.get("gen_ai.usage.input_tokens"),
-                cost_usd=self._compute_cost(attrs),
-                progress=self._infer_progress(span),
-                raw_id=span["span_id"],
-            )
+```json
+{
+  "resourceSpans": [
+    {
+      "resource": {"attributes": [...]},
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "spanId": "0000000000000001",
+              "startTimeUnixNano": "1717200001000000000",
+              "attributes": [
+                {"key": "gen_ai.agent.handoff.source.name", "value": {"stringValue": "code-writer"}},
+                {"key": "gen_ai.agent.handoff.state",       "value": {"stringValue": "blocked"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
 ```
 
-**Notes:**
+`startTimeUnixNano` is a string-encoded int64 nanosecond timestamp; the adapter converts it to ISO-8601 UTC.
 
-- Use `args_hash_from()` to deterministically hash operation name, model, and other action parameters—**order matters**.
-- Set `handoff_state` to the **bare** state token (e.g., `"blocked"`, `"waiting"`, `"in_progress"`) from `gen_ai.agent.handoff.state`, and set `to_agent` to the explicit target from `gen_ai.agent.handoff.target.name`. These are two separate fields — never pack them into one `"state on target"` string. Leave both `None` if unavailable.
-- Infer `progress` from span attributes (e.g., span did not error, or a custom `succeeded` flag).
+#### 3. Multi-scenario flat fixture
+
+A `{"scenarios": {"name": {"spans": [...]}}}` dict (e.g. the packaged fixture). Use the `scenario=` argument or `#scenario` CLI suffix to select one.
+
+### Usage
+
+```python
+from looptrip.adapters.otel import OTelSpanAdapter
+from looptrip.detector import detect_deadlock, detect_ping_pong
+from looptrip.detectors.types import DetectionConfig
+
+# Load from a flat multi-scenario fixture
+adapter = OTelSpanAdapter.from_json_file("spans.json", scenario="deadlock")
+events = list(adapter.events())
+reports = detect_deadlock(events)
+
+# Load from a real OTLP/JSON export (auto-detected or explicit)
+adapter = OTelSpanAdapter.from_json_file("otlp_export.json")    # auto-detect via resourceSpans
+adapter = OTelSpanAdapter.from_otlp_file("otlp_export.json")    # explicit OTLP entry point
+
+# Load from a JSONL file (one flat span dict per non-blank line)
+adapter = OTelSpanAdapter.from_jsonl_file("spans.jsonl")
+
+# CLI: otel: source
+# looptrip scan otel:spans.json#deadlock --all
+# looptrip scan otel:otlp_export.json
+# looptrip scan otel:spans.jsonl
+```
+
+### Attribute mapping
+
+| OTel attribute | Event field | Notes |
+|---|---|---|
+| `gen_ai.agent.handoff.source.name` | `agent` | Required (PR #98, adopted verbatim) |
+| `gen_ai.operation.name` | `tool` | Default `"dispatch"` when absent |
+| `start_time` / `startTimeUnixNano` | `ts` | ISO-8601 UTC string |
+| `span_id` / `spanId` | `raw_id` | Provenance pointer |
+| `gen_ai.agent.handoff.state` | `handoff_state` | Bare token; `None` when absent (looptrip-proposed) |
+| `gen_ai.agent.handoff.target.name` | `to_agent` | `None` when `handoff_state` absent (PR #98) |
+| `gen_ai.usage.input_tokens` | `input_tokens` | Optional enrichment |
+| — | `cost_usd` | Always `None` (not in handoff span attrs) |
+| — | `args_hash` | Always `None` |
+| — | `progress` | Always `False` |
+
+`handoff_state` and `to_agent` are two separate explicit `Event` fields — never packed into one string. When `gen_ai.agent.handoff.state` is absent (completed transfers, CONTROL scenario) both are `None`, leaving the deadlock blocked-map empty.
+
+### OTLP attribute value decoding
+
+The internal `_otlp_attr_value()` helper decodes OTLP typed value wrappers:
+
+| OTLP wrapper | Python type | Note |
+|---|---|---|
+| `{"stringValue": "..."}` | `str` | |
+| `{"intValue": "42"}` | `int` | int64 JSON-encoded as string |
+| `{"boolValue": true}` | `bool` | |
+| `{"doubleValue": 3.14}` | `float` | |
+| unknown kind | skip | attribute is silently omitted |
+
+### CLI source
+
+The `otel:` scheme is accepted by `looptrip scan` and `looptrip attribute`:
+
+```bash
+# Flat fixture — select scenario with #
+looptrip scan otel:tests/fixtures/otel_genai_handoff_spans.json#deadlock --all
+
+# OTLP export — auto-detected
+looptrip scan otel:my_export.json --detectors deadlock,ping_pong
+
+# JSONL
+looptrip scan otel:spans.jsonl --all
+```
+
+A bad path or malformed JSON exits with code 2 and a clean error message.
 
 ## Generic JSONL Adapter (Guidance)
 
