@@ -8,8 +8,33 @@ version = "0.1.0"
 description = "Deterministic, framework-agnostic detector of multi-agent coordination pathologies that trips at iteration 2"
 readme = "README.md"
 license = {text = "Apache-2.0"}
+authors = [{ name = "Edward Kubiak", email = "edward.kubiak.dev@gmail.com" }]
 requires-python = ">=3.10"
 dependencies = []
+keywords = [
+    "multi-agent",
+    "observability",
+    "opentelemetry",
+    "agents",
+    "llm",
+    "deadlock",
+    "livelock",
+    "coordination",
+    "detection",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: System :: Monitoring",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-cov"]
