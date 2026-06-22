@@ -4,7 +4,7 @@
 
 looptrip watches a multi-agent run as a stream of normalized events and flags the coordination pathologies that make agent systems burn money and spin: duplicate-work loops, ping-pong / livelock, deadlock, and non-termination. It is **detection-first** — it works over data you already have (OpenTelemetry GenAI spans, or a CAST `cast.db`) — and **deterministic / zero-LLM**: the same event stream always yields the same verdict. looptrip is an **observer, never a gate**; it reports, it never blocks.
 
-> **Phase 2 (this release)** ships full pathology coverage (duplicate-work, ping-pong / livelock, deadlock, non-termination), configurable sensitivity controls, counterfactual-replay attribution (via the `attribute` subcommand), and the `cast.db` adapter with reproducible proof on real data. The live OpenTelemetry `SpanProcessor` lands in later phases — see [Roadmap](#roadmap).
+> **Phase 2 (this release)** ships full pathology coverage (duplicate-work, ping-pong / livelock, deadlock, non-termination), configurable sensitivity controls, counterfactual-replay attribution (via the `attribute` subcommand), and the `cast.db` adapter with reproducible proof on real data. **Phase 4 ships OpenTelemetry support** — an offline adapter (`OTelSpanAdapter` from flat span dicts and OTLP/JSON exports) plus a live `LooptripSpanProcessor` for in-flight detection, available in the `looptrip[otel]` extra.
 
 ## The headline
 
@@ -43,7 +43,7 @@ looptrip --version
 ## How it works
 
 1. **One normalized event** — `(agent, tool, args_hash, ts, handoff_state)` plus optional cost/token metadata. An **adapter** maps each source's fields onto this schema, so detection logic never touches source-specific span-attribute renames.
-2. **Detection-first** — Phase 1 ships a `cast.db` adapter; a live OTel `SpanProcessor` and a generic JSONL adapter follow. Because `agent_runs` carries no per-dispatch args, the adapter sets `args_hash=None` and detection leans on the token-variance signal.
+2. **Detection-first** — Phase 1 ships a `cast.db` adapter. Phase 4 (now shipped) adds an offline OTel adapter (`OTelSpanAdapter` ingesting flat span dicts and OTLP/JSON/JSONL exports) and a live `LooptripSpanProcessor` for in-flight pathology detection in the `looptrip[otel]` extra. Because `agent_runs` carries no per-dispatch args, the adapter sets `args_hash=None` and detection leans on the token-variance signal.
 3. **Stdlib state machine** — the detector groups events by signature and trips on the 2nd same-signature occurrence with no progress delta. The core is **stdlib-only**; OpenTelemetry is an optional `[otel]` extra, never imported by the detector.
 4. **False-positive control is first-class** — a configurable input-token tolerance, a progress-delta marker, and an `idempotent_agents` allowlist keep legitimately-repeatable work (commits, reviews) from tripping. looptrip is meant to be run detect-then-print and dogfooded before any signal is trusted.
 
@@ -60,7 +60,7 @@ This project tries hard not to oversell:
 - **Phase 1** — `cast.db` adapter + duplicate-work / iteration-2 detector + reproducible proof.
 - **Phase 2** — full pathology coverage (ping-pong / livelock, deadlock, non-termination) + sensitivity controls.
 - **Phase 3** — counterfactual replay attribution ("which handoff was decisive").
-- **Phase 4** — live OpenTelemetry `SpanProcessor` (`on_start` detection / `on_end` attribution, AlwaysRecord sampler).
+- **Phase 4** — **(SHIPPED)** OpenTelemetry support: offline adapter (`OTelSpanAdapter` ingesting flat span dicts, OTLP/JSON, JSONL exports) and live `LooptripSpanProcessor` (in-flight pathology detection via `on_start` hooks, thread-safe, deduped) in the `looptrip[otel]` extra. Unit and synthetic testing complete; production multi-agent validation pending.
 - **Phase 5** — packaging (Claude Code plugin, Homebrew).
 - **Phase 6** — documentation (reference deep-dives, examples, architecture notes).
 - **Phase 7** — OpenTelemetry GenAI agent-observability semantic-convention engagement: adopt the upstream `gen_ai.agent.handoff.*` handoff identity (`semantic-conventions-genai`) and contribute the pathology layer — a pending/blocking wait-for state and loop-termination (`gen_ai.agent.finish_reason`) semantics — with looptrip as the deterministic reference implementation.
