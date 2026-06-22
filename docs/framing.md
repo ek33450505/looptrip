@@ -41,24 +41,27 @@ $792.96 is computed, not asserted—it comes from two independent paths (oracle 
 **The Competitor:** Watchtower (MIT license, LangGraph-only, trips at 3+ repeats, no handoff-state contract, no attribution).
 
 **The Differentiation:**
-looptrip is **framework-agnostic**, **fast** (deterministic, zero-LLM), and **standards-authored** (authoring the OTel `gen_ai.handoff` semantic convention). Watchtower is a solid single-framework tool; looptrip is the cross-framework observer.
+looptrip is **framework-agnostic**, **fast** (deterministic, zero-LLM), and **standards-engaged** (adopting the OTel GenAI `gen_ai.agent.handoff.*` convention and contributing the agent-loop pathology semantics). Watchtower is a solid single-framework tool; looptrip is the cross-framework observer.
 
 **Why It Matters:**
 Watchtower exists and is worth mentioning—it proves deterministic loop detection is feasible. Not acknowledging it signals ignorance or fear. Naming it and stating our advantages honestly signals confidence and technical rigor.
 
 ---
 
-## Guardrail 4: The Moat Is the Standard, Not the Detector Code
+## Guardrail 4: The Moat Is Standards Engagement, Not the Detector Code
 
-**The Claim:** looptrip's competitive advantage is **authorship of the OTel `gen_ai.handoff` semantic convention**, not the ~200-line detector implementation.
+**The Claim:** looptrip's competitive advantage is **standards engagement in the OpenTelemetry GenAI agent-observability conventions** — adopting the upstream `gen_ai.agent.handoff.*` handoff identity and contributing the agent-loop *pathology* layer looptrip uniquely detects — **not** the ~200-line detector implementation, and **not** sole authorship of a handoff namespace.
 
 **Why:**
 - The detector algorithm is straightforward (signature matching, cycle detection, window analysis). It's implementable in a weekend by a competent engineer.
-- The handoff contract—standardizing how agents report state, progress, and outcomes—is the irreplaceable piece. Once that standard is embedded in observability tooling (OTel, DataDog, etc.), every framework that adopts it becomes detectable via looptrip's logic *and every other detector's logic*.
-- The moat is regulatory/strategic (standards authorship), not technical (lines of code).
+- Handoff *identity* is already being standardized upstream: `gen_ai.agent.handoff.source.name` / `gen_ai.agent.handoff.target.name`, modeled as attributes on a `gen_ai.execute_tool` span (`open-telemetry/semantic-conventions-genai` PR #98, in progress). looptrip **adopts** that identity rather than competing with it.
+- looptrip's defensible contribution is the layer the in-progress handoff work omits: a **pending/blocking wait-for state** (what deadlock detection requires — distinct from a *completed* transfer) and **loop-termination / non-termination semantics** (aligned with the upstream `gen_ai.agent.finish_reason` and `gen_ai.agent.turn` proposals), backed by a deterministic, SDK-independent reference detector.
+- The moat is strategic (a sustained relationship with the OTel GenAI SIG and ownership of the pathology layer), not technical (lines of code).
 
 **Why It Matters:**
-Claiming the moat is the algorithm invites someone to rewrite it in a weekend and claim parity. Claiming the moat is the standard makes clear that looptrip's value compounds as adoption grows—the more frameworks that emit the handoff signal, the more powerful looptrip becomes.
+Claiming the moat is the algorithm invites someone to rewrite it in a weekend and claim parity. Claiming *sole authorship* of `gen_ai.handoff` — when the upstream convention already exists under a different name (`gen_ai.agent.handoff.*`) and is owned by the SIG — is both inaccurate and reputationally risky in front of the maintainers who must approve any contribution. The honest, stronger claim: looptrip co-shapes the *pathology layer* of an emerging standard and ships the reference implementation, so its value compounds as adoption grows.
+
+**Volatility note:** the upstream conventions are `stability:development` (nothing Stable yet) and move weekly. Re-verify every public claim about upstream state against `open-telemetry/semantic-conventions-genai` before publication.
 
 ---
 
