@@ -143,7 +143,12 @@ def _is_exempt(event: Event, config: DetectionConfig) -> bool:
     return event.agent in exempt_agents or event.tool in exempt_tools
 
 
-def _is_blocked(handoff_state: Optional[str], config: DetectionConfig) -> bool:
+def _is_blocked(
+    handoff_state: Optional[str],
+    config: DetectionConfig,
+    *,
+    blocked_lower: Optional[set] = None,
+) -> bool:
     """Return ``True`` if ``handoff_state`` is a declared blocked-state token.
 
     Operates on the BARE state token only: under the explicit-``to_agent``
@@ -164,13 +169,24 @@ def _is_blocked(handoff_state: Optional[str], config: DetectionConfig) -> bool:
         handoff_state: The bare state token to classify, or ``None``.
         config:        The active detection configuration, supplying
                        :attr:`~looptrip.detectors.types.DetectionConfig.blocked_states`.
+        blocked_lower: Optional pre-lowercased ``{s.lower() for s in
+                       config.blocked_states}`` set.  A hot-loop optimization for
+                       callers (e.g. :func:`~looptrip.detectors.deadlock.detect_deadlock`)
+                       that classify many events against the SAME config: pass
+                       the set once instead of letting this predicate rebuild it
+                       per call.  When ``None`` (the default) the set is built
+                       from ``config.blocked_states`` here.  The result is
+                       identical either way — the caller is responsible for
+                       passing a set equivalent to the rebuilt one.
 
     Returns:
         ``True`` iff ``handoff_state`` names a declared blocked state.
     """
-    return bool(handoff_state) and handoff_state.strip().lower() in {
-        s.lower() for s in config.blocked_states
-    }
+    if not handoff_state:
+        return False
+    if blocked_lower is None:
+        blocked_lower = {s.lower() for s in config.blocked_states}
+    return handoff_state.strip().lower() in blocked_lower
 
 
 def _state_key(event: Event, config: DetectionConfig) -> Any:

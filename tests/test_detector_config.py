@@ -555,3 +555,42 @@ def test_is_blocked_empty_blocked_states():
     """_is_blocked returns False when blocked_states is empty."""
     cfg = DetectionConfig(blocked_states=frozenset())
     assert _is_blocked("blocked", cfg) is False
+
+
+def test_is_blocked_precomputed_set_matches_from_scratch():
+    """Passing a precomputed blocked_lower set yields the SAME verdict as rebuilding.
+
+    Guards the P4 hot-loop optimization: detect_deadlock now computes
+    ``{s.lower() for s in cfg.blocked_states}`` once and passes it via the
+    ``blocked_lower`` keyword.  For every (config, token) pair the precomputed
+    path must be byte-identical to the default per-call rebuild path.
+    """
+    configs = [
+        DetectionConfig(),  # default {"blocked", "waiting"}
+        DetectionConfig(blocked_states=frozenset({"STALLED"})),
+        DetectionConfig(blocked_states=frozenset({"stuck", "halted"})),
+        DetectionConfig(blocked_states=frozenset()),
+    ]
+    tokens = [
+        None,
+        "",
+        "  ",
+        "blocked",
+        "BLOCKED",
+        "  Blocked  ",
+        "waiting",
+        "stalled",
+        "STUCK",
+        "DONE",
+        "blocked on B",
+    ]
+    for cfg in configs:
+        blocked_lower = {s.lower() for s in cfg.blocked_states}
+        for token in tokens:
+            from_scratch = _is_blocked(token, cfg)
+            precomputed = _is_blocked(token, cfg, blocked_lower=blocked_lower)
+            assert precomputed is from_scratch, (
+                f"blocked_lower mismatch for token={token!r} "
+                f"blocked_states={cfg.blocked_states!r}: "
+                f"precomputed={precomputed} from_scratch={from_scratch}"
+            )

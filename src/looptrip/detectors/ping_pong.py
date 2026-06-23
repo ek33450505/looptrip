@@ -145,7 +145,12 @@ def detect_ping_pong(
         assert reports[0].first_event.raw_id == 2  # 3rd event, index 2
     """
     cfg = resolve_config(config, knobs)
-    ev_list: List[Event] = list(events)
+    # Materialize once.  detect() already passes a list (the shared
+    # ``materialized`` copy), so the common registry path skips a redundant
+    # re-copy; a generator / other-iterable caller is still materialized here
+    # exactly once.  The list is never mutated, so sharing the caller's
+    # reference is safe.
+    ev_list: List[Event] = events if isinstance(events, list) else list(events)
 
     if len(ev_list) < 2:
         return []

@@ -652,3 +652,38 @@ def test_report_is_frozen():
     except Exception as e:
         # FrozenInstanceError message is "cannot assign to field '...'"
         assert "cannot assign" in str(e).lower()
+
+
+def test_list_and_generator_inputs_produce_identical_reports():
+    """P2: skipping the redundant copy for list input is behavior-preserving.
+
+    detect_ping_pong now materializes only when the input is not already a
+    list (``events if isinstance(events, list) else list(events)``).  A list
+    input (the registry path) and an equivalent generator input must yield
+    byte-identical reports, proving the no-copy fast path changes nothing.
+    """
+    base = [
+        _dispatch(1, agent="A"),
+        _dispatch(2, agent="B"),
+        _dispatch(3, agent="A"),
+        _dispatch(4, agent="B"),
+        _dispatch(5, agent="A"),
+    ]
+    from_list = detect_ping_pong(base)
+    from_gen = detect_ping_pong(e for e in base)
+    assert len(from_list) == len(from_gen) == 1
+    assert from_list[0] == from_gen[0]
+
+
+def test_list_input_is_not_mutated():
+    """P2: sharing the caller's list reference must not mutate it."""
+    events = [
+        _dispatch(1, agent="A"),
+        _dispatch(2, agent="B"),
+        _dispatch(3, agent="A"),
+        _dispatch(4, agent="B"),
+        _dispatch(5, agent="A"),
+    ]
+    snapshot = list(events)
+    detect_ping_pong(events)
+    assert events == snapshot  # same objects, same order, unchanged length

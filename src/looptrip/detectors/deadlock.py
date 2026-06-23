@@ -142,6 +142,12 @@ def detect_deadlock(
     """
     cfg = resolve_config(config, knobs)
 
+    # Pre-compute the lowercased blocked-state set ONCE for the whole
+    # detection.  _is_blocked would otherwise rebuild this set on every event
+    # in the latest-state-wins pass below; passing it in keeps the per-event
+    # verdict identical while building the set a single time.
+    blocked_lower: set = {s.lower() for s in cfg.blocked_states}
+
     # ------------------------------------------------------------------ #
     # Phase 1 — latest-state-wins pass                                     #
     # ------------------------------------------------------------------ #
@@ -150,7 +156,7 @@ def detect_deadlock(
     # final state per agent is retained.
     latest: dict[str, tuple[Event, bool]] = {}
     for event in events:
-        blk = _is_blocked(event.handoff_state, cfg)
+        blk = _is_blocked(event.handoff_state, cfg, blocked_lower=blocked_lower)
         latest[event.agent] = (event, blk)
 
     # ------------------------------------------------------------------ #

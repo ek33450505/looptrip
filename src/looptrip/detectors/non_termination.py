@@ -62,7 +62,6 @@ from looptrip.detectors.types import (
     resolve_config,
 )
 from looptrip.detectors._shared import (
-    _is_exempt,
     _is_progress,
     _is_terminal,
     _state_key,
@@ -127,7 +126,13 @@ def detect_non_termination(
             when ``knobs`` contains an unrecognized field name.
     """
     cfg = resolve_config(config, knobs)
-    evs: List[Event] = list(events)
+    # Materialize once.  detect() already passes a list (the shared
+    # ``materialized`` copy), so the common registry path skips a redundant
+    # re-copy; a generator / other-iterable caller is still materialized here
+    # exactly once.  The list is required for index-based window accounting and
+    # post-trip slicing, and is never mutated, so sharing the caller's
+    # reference is safe.
+    evs: List[Event] = events if isinstance(events, list) else list(events)
     N = cfg.window_size
 
     if len(evs) < N:
@@ -161,11 +166,21 @@ def detect_non_termination(
 
     reports: List[PathologyReport] = []
 
+    # Pre-compute the exemption unions ONCE (mirrors ping_pong's exempt_agents
+    # precompute).  Calling _shared._is_exempt per event would rebuild both
+    # frozenset unions on every slide; the inline membership test below is
+    # identical to _is_exempt's ``agent in exempt_agents or tool in
+    # exempt_tools`` and yields the same boolean.
+    exempt_agents: frozenset = (
+        cfg.idempotent_agents | cfg.retry_allowed | cfg.allowlist_agents
+    )
+    exempt_tools: frozenset = cfg.idempotent_tools | cfg.allowlist_tools
+
     for i, ev in enumerate(evs):
         sk = _state_key(ev, cfg)
         is_prog = _is_progress(ev, cfg)
         is_term = _is_terminal(ev, cfg)
-        is_ex = _is_exempt(ev, cfg)
+        is_ex = ev.agent in exempt_agents or ev.tool in exempt_tools
 
         # Slide: evict the oldest entry when the window is already at full
         # capacity (i.e. we have seen exactly N events already).

@@ -462,3 +462,59 @@ def test_all_exempt_events_do_not_qualify():
     # All events exempt → exempt_count == window_size → does not qualify.
     reports = detect_non_termination(events, config=cfg, window_size=20)
     assert reports == []
+
+
+def test_inline_exemption_unions_all_five_sets():
+    """P3: hoisted inline exemption still unions all five exemption sets.
+
+    The detector now precomputes the exempt-agent / exempt-tool unions once and
+    tests membership inline instead of calling _is_exempt per event.  This
+    guards against the inline test dropping a set: a full window whose 20 events
+    are exempt — distributed across ALL FIVE mechanisms (idempotent_agents,
+    retry_allowed, allowlist_agents, idempotent_tools, allowlist_tools) — must
+    have ``exempt_count == N`` and therefore NOT qualify.  If any of the five
+    sets were missing from the inline union, those events would not count as
+    exempt, ``exempt_count < N`` would hold, and a spurious report would fire.
+    """
+    cfg = DetectionConfig(
+        idempotent_agents=frozenset({"ia"}),
+        retry_allowed=frozenset({"ra"}),
+        allowlist_agents=frozenset({"aa"}),
+        idempotent_tools=frozenset({"it"}),
+        allowlist_tools=frozenset({"at"}),
+    )
+    # 20 events (exactly one full window); each event exempt via one of the
+    # five mechanisms in rotation. distinct == 5 (≤ cap=10) so the plateau is
+    # otherwise a candidate, but exempt_count == 20 == N blocks qualification.
+    mechanisms = [
+        dict(agent="ia"),   # idempotent_agents
+        dict(agent="ra"),   # retry_allowed
+        dict(agent="aa"),   # allowlist_agents
+        dict(tool="it"),    # idempotent_tools
+        dict(tool="at"),    # allowlist_tools
+    ]
+    events = [_dispatch(i, **mechanisms[i % 5]) for i in range(20)]
+    reports = detect_non_termination(events, config=cfg, window_size=20)
+    assert reports == []
+
+
+def test_list_and_generator_inputs_produce_identical_reports():
+    """P2: skipping the redundant copy for list input is behavior-preserving.
+
+    detect_non_termination now materializes only when the input is not already
+    a list.  A list input (the registry path) and an equivalent generator must
+    yield byte-identical reports.
+    """
+    base = [_dispatch(i) for i in range(1, 26)]
+    from_list = detect_non_termination(base, window_size=20)
+    from_gen = detect_non_termination((e for e in base), window_size=20)
+    assert len(from_list) == len(from_gen) == 1
+    assert from_list[0] == from_gen[0]
+
+
+def test_list_input_is_not_mutated():
+    """P2: sharing the caller's list reference must not mutate it."""
+    events = [_dispatch(i) for i in range(1, 26)]
+    snapshot = list(events)
+    detect_non_termination(events, window_size=20)
+    assert events == snapshot
