@@ -370,8 +370,13 @@ def test_otlp_attr_value_unknown_kind_returns_none():
 
 
 def test_start_time_unix_nano_whole_second():
-    """Whole-second startTimeUnixNano converts to '...Z' ISO string."""
-    # 1717200001000000000 ns = 2024-06-01T00:00:01Z
+    """Whole-second startTimeUnixNano converts to a uniform '...01.000000000Z' string.
+
+    B1: ``unix_nanos_to_iso`` always emits a fixed-width 9-digit fractional
+    component (whole seconds -> ``.000000000``) so lexicographic order equals
+    chronological order.
+    """
+    # 1717200001000000000 ns = 2024-06-01T00:00:01.000000000Z
     doc = {
         "resourceSpans": [
             {
@@ -396,11 +401,32 @@ def test_start_time_unix_nano_whole_second():
     }
     spans = _normalize_otlp(doc)
     assert len(spans) == 1
-    assert spans[0]["start_time"] == "2024-06-01T00:00:01Z"
+    assert spans[0]["start_time"] == "2024-06-01T00:00:01.000000000Z"
+
+
+def _to_uniform_iso(ts: str) -> str:
+    """Normalize a bare-second ``'...Z'`` ISO string to the B1 uniform shape.
+
+    The committed flat fixture stores whole-second timestamps in the bare
+    ``'2024-06-01T00:00:01Z'`` form, whereas ``unix_nanos_to_iso`` now always
+    emits a fixed-width 9-digit fractional component
+    (``'2024-06-01T00:00:01.000000000Z'``). Both denote the same instant; this
+    helper canonicalizes the bare form so the round-trip cross-check compares
+    instants, not incidental width.
+    """
+    body = ts[:-1]  # strip trailing 'Z'
+    if "." not in body:
+        body += ".000000000"
+    return body + "Z"
 
 
 def test_start_time_unix_nano_all_flat_timestamps(tmp_path):
-    """All OTLP fixture timestamps round-trip to the exact flat fixture ISO strings."""
+    """All OTLP fixture timestamps round-trip to the same instant as the flat fixture.
+
+    The flat fixture uses the bare whole-second form; ``unix_nanos_to_iso`` now
+    emits the uniform fixed-width fractional form (B1). They denote the same
+    instant, so the bare flat string is canonicalized before comparison.
+    """
     flat = _load_flat()
     otlp = _load_otlp()
 
@@ -410,9 +436,9 @@ def test_start_time_unix_nano_all_flat_timestamps(tmp_path):
         otlp_spans = _normalize_otlp(sub_doc)
 
         for flat_span, otlp_span in zip(flat_spans, otlp_spans):
-            assert otlp_span["start_time"] == flat_span["start_time"], (
+            assert otlp_span["start_time"] == _to_uniform_iso(flat_span["start_time"]), (
                 f"{scenario}: OTLP ts {otlp_span['start_time']!r} "
-                f"!= flat ts {flat_span['start_time']!r}"
+                f"!= flat ts {flat_span['start_time']!r} (uniform)"
             )
 
 

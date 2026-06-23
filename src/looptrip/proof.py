@@ -62,7 +62,7 @@ def _top_report(session_id: str) -> PathologyReport:
     detected, so a silently broken fixture fails loudly.
     """
     adapter = CastDbAdapter.from_fixture(session_id)
-    events = sorted(adapter.events(), key=lambda event: (event.ts, event.raw_id))
+    events = sorted(adapter.events(), key=lambda event: (event.ts or "", event.raw_id or ""))
     reports = detect(events)
     if not reports:
         raise AssertionError(f"no pathology detected for session {session_id!r}")

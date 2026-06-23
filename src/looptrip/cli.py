@@ -83,7 +83,7 @@ def _source_events(source: str) -> List[Event]:
         raise ValueError(
             f"unknown source scheme {scheme!r}; expected 'fixture', 'cast-db', or 'otel'"
         )
-    return sorted(adapter.events(), key=lambda event: (event.ts, event.raw_id))
+    return sorted(adapter.events(), key=lambda event: (event.ts or "", event.raw_id or ""))
 
 
 def _resolve_kinds(all_flag: bool, detectors_csv: Optional[str]) -> Optional[tuple[str, ...]]:
@@ -140,7 +140,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     try:
         events = _source_events(args.source)
     except (ValueError, ModuleNotFoundError, ImportError, sqlite3.Error,
-            FileNotFoundError, OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            FileNotFoundError, OSError, json.JSONDecodeError, KeyError, TypeError,
+            RecursionError, OverflowError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -206,7 +207,8 @@ def _cmd_attribute(args: argparse.Namespace) -> int:
     try:
         events = _source_events(args.source)
     except (ValueError, ModuleNotFoundError, ImportError, sqlite3.Error,
-            FileNotFoundError, OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            FileNotFoundError, OSError, json.JSONDecodeError, KeyError, TypeError,
+            RecursionError, OverflowError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

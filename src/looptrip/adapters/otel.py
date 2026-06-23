@@ -41,16 +41,52 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 from typing import Any, Dict, Iterator, List, Optional
 
 from looptrip.normalize import Adapter, Event
+
+# Input-hardening caps (S2): reject pathologically large inputs cleanly rather
+# than letting ``json.load`` exhaust memory. ``from_json_file`` /
+# ``from_jsonl_file`` raise a plain :class:`ValueError` above these limits,
+# which the CLI maps to a clean exit-2 error (no traceback). Normal-sized
+# inputs are unaffected.
+_MAX_INPUT_BYTES = 256 * 1024 * 1024  # 256 MiB whole-file cap
+_MAX_JSONL_SPANS = 5_000_000  # accumulated-span cap for the streaming JSONL path
+
+
+def _guard_input_size(path: str) -> None:
+    """Raise a clean :class:`ValueError` when ``path`` exceeds the size cap.
+
+    Stats the file before any ``json.load`` so a pathologically large input is
+    rejected without first being read into memory. A stat failure (e.g. a
+    missing file) is swallowed here so the caller's subsequent ``open`` raises
+    the precise :class:`FileNotFoundError`/:class:`OSError`. Above
+    :data:`_MAX_INPUT_BYTES` the raised ``ValueError`` is caught by the CLI and
+    surfaced as a clean exit-2 error.
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return  # let the caller's open() raise the precise error
+    if size > _MAX_INPUT_BYTES:
+        raise ValueError(
+            f"input file {path!r} is {size} bytes, exceeding the "
+            f"{_MAX_INPUT_BYTES // (1024 * 1024)} MiB input cap"
+        )
 
 
 def unix_nanos_to_iso(ns: int) -> str:
     """Convert a Unix nanosecond timestamp to an ISO-8601 UTC string.
 
-    Whole-second values produce ``'%Y-%m-%dT%H:%M:%SZ'``; sub-second values
-    include a 9-digit fractional-seconds suffix to preserve full nanosecond
+    Always emits a fixed-width 9-digit fractional-seconds component, so every
+    value has the single uniform shape ``'2024-06-01T00:00:01.000000000Z'``
+    (whole seconds use ``.000000000``). The fixed width is load-bearing:
+    downstream ordering sorts events by **lexicographic** string comparison,
+    and a uniform shape makes lexicographic order equal chronological order. A
+    bare whole-second form (``'...:01Z'``) would sort AFTER same-second
+    sub-second values because ``'.'`` (0x2E) < ``'Z'`` (0x5A), corrupting
+    chronological order. Integer formatting also preserves full nanosecond
     precision without floating-point rounding.
 
     This helper is extracted here so that both the offline OTLP flattener
@@ -65,14 +101,14 @@ def unix_nanos_to_iso(ns: int) -> str:
             ``ReadableSpan.start_time`` in the live SDK).
 
     Returns:
-        ISO-8601 UTC string, e.g. ``'2024-06-01T00:00:01Z'`` (whole-second)
-        or ``'2024-06-01T00:00:01.500000000Z'`` (sub-second).
+        ISO-8601 UTC string with a uniform 9-digit fractional component, e.g.
+        ``'2024-06-01T00:00:01.000000000Z'`` (whole-second) or
+        ``'2024-06-01T00:00:01.500000000Z'`` (sub-second).
     """
     secs, rem = divmod(ns, 1_000_000_000)
     dt = datetime.datetime.fromtimestamp(secs, tz=datetime.timezone.utc)
-    if rem == 0:
-        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    # Sub-second precision: integer formatting avoids float rounding.
+    # Always emit a fixed-width fractional component so lexicographic order
+    # equals chronological order; integer formatting avoids float rounding.
     return dt.strftime("%Y-%m-%dT%H:%M:%S") + f".{rem:09d}Z"
 
 
@@ -204,11 +240,13 @@ class OTelSpanAdapter(Adapter):
             An :class:`OTelSpanAdapter` holding the loaded spans.
 
         Raises:
-            ValueError: on an unrecognized JSON shape or an unknown/missing
-                        scenario name.
+            ValueError: on an unrecognized JSON shape, an unknown/missing
+                        scenario name, or an input exceeding the size cap
+                        (:data:`_MAX_INPUT_BYTES`).
             FileNotFoundError: when ``path`` does not exist.
             json.JSONDecodeError: on malformed JSON.
         """
+        _guard_input_size(path)
         with open(path, "r", encoding="utf-8") as fh:
             doc = json.load(fh)
 
@@ -232,13 +270,22 @@ class OTelSpanAdapter(Adapter):
         Raises:
             FileNotFoundError: when ``path`` does not exist.
             json.JSONDecodeError: on a malformed line.
+            ValueError: when the file exceeds the size cap
+                        (:data:`_MAX_INPUT_BYTES`) or accumulates more than
+                        :data:`_MAX_JSONL_SPANS` spans.
         """
+        _guard_input_size(path)
         spans: List[Dict[str, Any]] = []
         with open(path, "r", encoding="utf-8") as fh:
             for line in fh:
                 stripped = line.strip()
                 if stripped:
                     spans.append(json.loads(stripped))
+                    if len(spans) > _MAX_JSONL_SPANS:
+                        raise ValueError(
+                            f"JSONL input {path!r} exceeds the maximum of "
+                            f"{_MAX_JSONL_SPANS} spans"
+                        )
         return cls(spans)
 
     @classmethod
@@ -428,9 +475,10 @@ def _normalize_otlp(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     Attribute resolution: resource-level attributes have lower precedence;
     span-level attributes win on collision.
 
-    ``startTimeUnixNano`` is converted to ISO-8601 UTC with trailing ``'Z'``.
-    Whole-second values produce ``'%Y-%m-%dT%H:%M:%SZ'``; sub-second values
-    include fractional seconds.
+    ``startTimeUnixNano`` is converted to ISO-8601 UTC via
+    :func:`unix_nanos_to_iso`, which always emits the uniform fixed-width shape
+    ``'2024-06-01T00:00:01.000000000Z'`` (whole seconds use ``.000000000``) so
+    lexicographic order equals chronological order.
 
     Args:
         doc: A ``{"resourceSpans": [...]}`` dict.
