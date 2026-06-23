@@ -27,8 +27,9 @@ This module is stdlib-only and defines no global mutable state.
 
 from __future__ import annotations
 
+import importlib.util
 import json
-import sys
+import os
 from importlib.resources import files
 from typing import Any, Callable, Iterator, List, Optional
 
@@ -42,9 +43,14 @@ _AGENT_RUNS_SQL = (
     "FROM agent_runs WHERE session_id = ? ORDER BY started_at, id"
 )
 
-# Location of the cast_db helper used by the default (live) loader. Imported
-# lazily — never at module import — so CI without cast_db still loads looptrip.
-_CAST_DB_SCRIPTS_DIR = "/Users/edkubiak/.claude/scripts"
+# Location of the cast_db helper used by the default (live) loader. Resolved
+# from the ``CAST_DB_SCRIPTS_DIR`` env var with a portable ``~/.claude/scripts``
+# default so the package carries no machine-specific home path. The cast_db
+# module itself is loaded lazily — never at module import — so CI without
+# cast_db still loads looptrip.
+_CAST_DB_SCRIPTS_DIR = os.environ.get(
+    "CAST_DB_SCRIPTS_DIR", os.path.expanduser("~/.claude/scripts")
+)
 
 # Type alias for a parameterized query callable, e.g. cast_db.db_query.
 DbQuery = Callable[[str, tuple], List[Any]]
@@ -149,13 +155,37 @@ class CastDbAdapter(Adapter):
 
     @staticmethod
     def _default_db_query() -> DbQuery:
-        """Lazily import ``cast_db.db_query`` from the CAST scripts directory.
+        """Load ``cast_db.db_query`` from the CAST scripts directory by file path.
 
-        The import is deferred to call time so importing looptrip never depends
-        on cast_db being present — keeping CI (where it is absent) green.
+        The cast_db module is loaded via
+        :func:`importlib.util.spec_from_file_location` against the explicit
+        ``<scripts_dir>/cast_db.py`` file, so the scripts directory never
+        becomes a lasting ``sys.path`` entry able to shadow stdlib or
+        site-packages for the rest of the process. The loaded module is not
+        registered in ``sys.modules`` either. The load is deferred to call time
+        so importing looptrip never depends on cast_db being present — keeping
+        CI (where it is absent) green.
+
+        Raises:
+            ModuleNotFoundError: when ``cast_db.py`` is absent from the scripts
+                directory (so the CLI surfaces a clean exit-2 error).
+            ImportError: when the file exists but exposes no ``db_query``
+                callable or cannot be loaded.
         """
-        if _CAST_DB_SCRIPTS_DIR not in sys.path:
-            sys.path.insert(0, _CAST_DB_SCRIPTS_DIR)
-        from cast_db import db_query  # type: ignore[import-not-found]
-
-        return db_query
+        module_path = os.path.join(_CAST_DB_SCRIPTS_DIR, "cast_db.py")
+        if not os.path.isfile(module_path):
+            raise ModuleNotFoundError(
+                f"cast_db.py not found at {module_path!r}; set CAST_DB_SCRIPTS_DIR "
+                "to the directory holding CAST's cast_db.py to use cast-db mode"
+            )
+        spec = importlib.util.spec_from_file_location("looptrip._cast_db_live", module_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"could not load a module spec for {module_path!r}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        try:
+            return module.db_query  # type: ignore[no-any-return]
+        except AttributeError as exc:
+            raise ImportError(
+                f"{module_path!r} defines no 'db_query' callable"
+            ) from exc
