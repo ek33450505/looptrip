@@ -86,11 +86,16 @@ def _emit_handoff_span(tracer, source: str, target: str, state: str, tokens: int
 
 
 def test_unix_nanos_to_iso_whole_second():
-    """Whole-second timestamp converts to 'YYYY-MM-DDTHH:MM:SSZ' without fraction."""
-    # 1717200001000000000 ns = 2024-06-01T00:00:01Z
+    """Whole-second input now emits a fixed-width 9-digit fraction (B1).
+
+    A uniform shape for every timestamp keeps lexicographic order == chronological
+    order, so an exact-second event no longer mis-sorts after same-second sub-second
+    events that share the wall-clock second.
+    """
+    # 1717200001000000000 ns = 2024-06-01T00:00:01 (whole second)
     result = unix_nanos_to_iso(1_717_200_001_000_000_000)
-    assert result == "2024-06-01T00:00:01Z"
-    assert "." not in result
+    assert result == "2024-06-01T00:00:01.000000000Z"
+    assert result.endswith(".000000000Z")
 
 
 def test_unix_nanos_to_iso_sub_second():
@@ -397,6 +402,72 @@ def test_processor_thread_safety():
     assert len(detected) <= 1
 
 
+def test_processor_bounds_event_buffer_and_fired_set():
+    """REGRESSION (P1/S1): flooding distinct fingerprints keeps both structures bounded.
+
+    A long-running observer must not leak.  With a finite ``max_window`` the
+    rolling event buffer (``_events``) is capped at ``max_window`` and the
+    de-dup set (``_fired``) is capped at ``max_window * 8``.  Flooding the
+    processor with far more DISTINCT firing fingerprints than either cap must
+    leave BOTH bounded, while normal de-dup (a repeated fingerprint fires
+    exactly once) still holds.
+    """
+    max_window = 16
+    fired_cap = max_window * 8  # 128 — must match the processor's internal sizing
+
+    detected: List = []
+    proc = LooptripSpanProcessor(on_detection=detected.append, max_window=max_window)
+    provider = _make_provider(proc)
+    tracer = provider.get_tracer("test")
+
+    # Each distinct agent emits an identical pair -> trips duplicate_work exactly
+    # once with a distinct fingerprint (agent, tool, args_hash).  We flood well
+    # past the _fired cap so eviction of the OLDEST fingerprints must kick in.
+    n_agents = fired_cap + 50  # 178 distinct firing fingerprints (> cap)
+    for i in range(n_agents):
+        agent = f"flood-agent-{i}"
+        _emit_handoff_span(tracer, agent, "reviewer", "in_progress", tokens=100)
+        _emit_handoff_span(tracer, agent, "reviewer", "in_progress", tokens=100)
+
+    # Each distinct fingerprint fired exactly once: de-dup held across the flood
+    # and the bounded window produced no spurious re-fires.
+    assert len(detected) == n_agents
+
+    # Both internal structures stayed bounded by their caps.
+    with proc._lock:
+        # Event buffer saturated at exactly max_window (oldest evicted, O(1)).
+        assert len(proc._events) <= max_window
+        assert len(proc._events) == max_window
+        # _fired saturated at exactly its cap (oldest fingerprint evicted).
+        assert len(proc._fired) <= fired_cap
+        assert len(proc._fired) == fired_cap
+
+    # Normal de-dup still holds: re-emitting the most-recent agent's pair (still
+    # tracked in _fired) produces no new detection.
+    before = len(detected)
+    last_agent = f"flood-agent-{n_agents - 1}"
+    _emit_handoff_span(tracer, last_agent, "reviewer", "in_progress", tokens=100)
+    _emit_handoff_span(tracer, last_agent, "reviewer", "in_progress", tokens=100)
+    assert len(detected) == before, "A still-tracked fingerprint must not re-fire"
+
+
+def test_processor_unbounded_window_preserves_none_contract():
+    """max_window=None keeps the event buffer unbounded (explicit opt-in)."""
+    detected: List = []
+    proc = LooptripSpanProcessor(on_detection=detected.append, max_window=None)
+    provider = _make_provider(proc)
+    tracer = provider.get_tracer("test")
+
+    # Emit more distinct spans than the finite default would retain.
+    for i in range(50):
+        _emit_handoff_span(tracer, f"u-agent-{i}", "reviewer", "in_progress", tokens=10)
+
+    # No maxlen -> every event is retained.
+    with proc._lock:
+        assert proc._events.maxlen is None
+        assert len(proc._events) == 50
+
+
 # ============================================================================
 # DELIVERABLE B — emitter tests
 # ============================================================================
@@ -519,8 +590,9 @@ def test_shutdown_clears_state():
     _emit_handoff_span(tracer, "s-agent", "t-agent", "in_progress", tokens=10)
     assert len(detected) == 1
 
-    # After shutdown, internal state is cleared.
+    # After shutdown, internal state is cleared. (_events is a bounded deque
+    # and _fired is an OrderedDict, so assert emptiness rather than ==[]/==set().)
     proc.shutdown()
     with proc._lock:
-        assert proc._events == []
-        assert proc._fired == set()
+        assert len(proc._events) == 0
+        assert len(proc._fired) == 0

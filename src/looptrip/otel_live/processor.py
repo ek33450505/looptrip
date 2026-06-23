@@ -23,22 +23,32 @@ a no-op (see its docstring); offline ``looptrip attribute`` covers post-hoc
 attribution analysis.
 
 **Thread safety.**  ``on_start`` is called from application threads.  The
-rolling event list (``_events``) and the fired-fingerprint set (``_fired``)
-are both guarded by a :class:`threading.Lock`.
+rolling event buffer (``_events``, a :class:`collections.deque`) and the
+fired-fingerprint set (``_fired``, an insertion-ordered
+:class:`collections.OrderedDict`) are both guarded by a
+:class:`threading.Lock`.
 
 **Detection complexity.**  Running :func:`~looptrip.detector.detect` on
-every handoff span arrival is O(N) in the number of buffered events (bounded
-by ``max_window``).  For typical multi-agent workflows with a bounded number
-of handoffs, this is acceptable.  If you need tighter bounds, set
-``max_window`` to a small value (e.g. ``50``); the oldest events are dropped
-when the window is exceeded, which may cause some pathologies to be missed
-but keeps the per-span overhead constant.
+every handoff span arrival is O(N) in the number of buffered events, which is
+bounded by ``max_window`` (default ``1024``).  ``_events`` is a
+:class:`collections.deque` with ``maxlen=max_window``, so the oldest event is
+evicted in O(1) on overflow — there is no per-span slice copy.  For
+long-running services keep a finite ``max_window`` (the default) so both
+per-span work and memory stay bounded; pass ``max_window=None`` to opt into an
+explicitly unbounded buffer (only suitable for finite-duration workflows).  If
+you need tighter bounds, set ``max_window`` to a small value (e.g. ``50``);
+dropping the oldest events may cause some pathologies to be missed but keeps
+the per-span overhead constant.
 
-**De-duplication.**  Once a pathology fingerprint has fired
-``(report.kind, report.signature)``, it is added to ``_fired`` and will
-never fire again for the lifetime of the processor, regardless of how many
-more events accumulate.  This prevents callback storms on long-running
-runaways.
+**De-duplication.**  Once a pathology fingerprint
+``(report.kind, report.signature)`` has fired, it is recorded in ``_fired``
+and will not fire again while it remains there — preventing callback storms on
+long-running runaways.  ``_fired`` is itself bounded (cap ``max_window * 8``
+when ``max_window`` is set, else ``8192``); when full, the OLDEST fingerprint
+is evicted.  The cap carries enough headroom that de-dup for realistic
+workloads is unaffected, but on an extremely long-running observer a very old
+fingerprint may eventually be evicted and re-fire — acceptable (and arguably
+desirable) for a perpetual live monitor.
 
 Example::
 
@@ -78,7 +88,8 @@ OpenTelemetry SDK.  Importing it without the SDK installed raises
 from __future__ import annotations
 
 import threading
-from typing import Callable, List, Optional, Set, Tuple
+from collections import OrderedDict, deque
+from typing import Callable, Deque, List, Optional, Tuple
 
 # SDK import — lives only in looptrip.otel_live.*.
 from opentelemetry.sdk.trace import SpanProcessor  # type: ignore[import]
@@ -91,6 +102,21 @@ from .bridge import readable_span_to_event
 from .emit import LooptripLogEmitter
 
 __all__ = ["LooptripSpanProcessor"]
+
+#: Default rolling-buffer size.  A finite default keeps the shipped processor
+#: bounded in both work and memory for long-running services; pass
+#: ``max_window=None`` to ``LooptripSpanProcessor`` for an explicitly unbounded
+#: buffer (only suitable for finite-duration workflows).
+_DEFAULT_MAX_WINDOW = 1024
+
+#: Multiplier applied to ``max_window`` to size the ``_fired`` de-dup cap when a
+#: finite window is in effect.  The headroom (8×) ensures de-dup for realistic
+#: workloads is unaffected while still bounding the structure.
+_FIRED_CAP_FACTOR = 8
+
+#: Fallback ``_fired`` cap used when ``max_window`` is ``None`` (unbounded
+#: buffer), so the de-dup set itself can never grow without limit.
+_DEFAULT_FIRED_CAP = 8192
 
 
 class LooptripSpanProcessor(SpanProcessor):
@@ -119,10 +145,13 @@ class LooptripSpanProcessor(SpanProcessor):
         emitter:      A :class:`LooptripLogEmitter` that emits one OTel log
                       record per new report.  Called outside the internal
                       lock.
-        max_window:   Maximum number of events kept in the rolling buffer.
-                      When exceeded, the oldest event is dropped (FIFO).
-                      ``None`` means unbounded (suitable for finite-duration
-                      workflows; set a value for long-running services).
+        max_window:   Maximum number of events kept in the rolling buffer
+                      (default ``1024``).  Backed by a
+                      :class:`collections.deque` with ``maxlen=max_window``, so
+                      the oldest event is evicted in O(1) when the buffer is
+                      full.  Pass ``None`` for an explicitly unbounded buffer
+                      (only suitable for finite-duration workflows; the finite
+                      default is recommended for long-running services).
     """
 
     def __init__(
@@ -131,7 +160,7 @@ class LooptripSpanProcessor(SpanProcessor):
         detectors: Optional[Tuple[str, ...]] = None,
         on_detection: Optional[Callable] = None,
         emitter: Optional[LooptripLogEmitter] = None,
-        max_window: Optional[int] = None,
+        max_window: Optional[int] = _DEFAULT_MAX_WINDOW,
     ) -> None:
         self._config = config
         self._detectors = detectors
@@ -139,8 +168,19 @@ class LooptripSpanProcessor(SpanProcessor):
         self._emitter = emitter
         self._max_window = max_window
 
-        self._events: List[Event] = []
-        self._fired: Set[Tuple] = set()
+        # Rolling buffer: a deque with maxlen=max_window evicts the oldest event
+        # in O(1) on overflow (maxlen=None means unbounded — preserves the old
+        # contract).
+        self._events: Deque[Event] = deque(maxlen=max_window)
+        # De-dup set as an insertion-ordered map (value is unused); bounded so a
+        # long-running observer cannot leak on distinct fingerprints.  When
+        # full, the OLDEST fingerprint is evicted (see on_start).
+        self._fired: "OrderedDict[Tuple, None]" = OrderedDict()
+        self._fired_cap = (
+            _DEFAULT_FIRED_CAP
+            if max_window is None
+            else max(1, max_window * _FIRED_CAP_FACTOR)
+        )
         self._lock = threading.Lock()
 
     def on_start(self, span, parent_context=None) -> None:
@@ -169,10 +209,9 @@ class LooptripSpanProcessor(SpanProcessor):
                 return
 
             with self._lock:
+                # deque(maxlen=max_window) evicts the oldest event in O(1) on
+                # overflow; no manual slice needed.
                 self._events.append(ev)
-                if self._max_window and len(self._events) > self._max_window:
-                    # Drop oldest to maintain the bounded window.
-                    self._events = self._events[-self._max_window:]
                 reports = detect(
                     list(self._events),
                     config=self._config,
@@ -182,7 +221,12 @@ class LooptripSpanProcessor(SpanProcessor):
                 for report in reports:
                     fp = (report.kind, report.signature)
                     if fp not in self._fired:
-                        self._fired.add(fp)
+                        self._fired[fp] = None
+                        if len(self._fired) > self._fired_cap:
+                            # Evict the OLDEST fingerprint to keep the de-dup set
+                            # bounded; a very old pathology may eventually
+                            # re-fire on an extremely long run (acceptable).
+                            self._fired.popitem(last=False)
                         new_reports.append(report)
 
             # Dispatch outside the lock so callbacks are not held under it.
