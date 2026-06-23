@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11']
+        python-version: ['3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v5
 
@@ -24,4 +24,33 @@ jobs:
         run: python -m pytest tests/ -v
 
       - name: Proof reproduces the headline
+        run: looptrip proof
+
+  core-stdlib-only:
+    # Guards the headline constraint: the core package must import and run with
+    # ZERO third-party dependencies.  Installs WITHOUT the [otel] extra so a
+    # leaked top-level opentelemetry (or any other third-party) import in a core
+    # module fails CI here even though the full [dev,otel] matrix above stays
+    # green.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install package WITHOUT the otel extra
+        run: pip install -e ".[dev]"
+
+      - name: Assert opentelemetry is NOT installed
+        run: python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('opentelemetry') is None else 1)"
+
+      - name: Run stdlib-core import guard
+        run: python -m pytest tests/test_stdlib_core.py -v
+
+      - name: Run core (non-otel) test subset
+        run: python -m pytest tests/ --ignore=tests/test_otel_live.py --ignore=tests/test_stdlib_core.py -v
+
+      - name: Proof reproduces the headline (no otel installed)
         run: looptrip proof
