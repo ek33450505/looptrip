@@ -5,4 +5,4 @@ A framework-agnostic, zero-LLM, stdlib-only detector that trips at iteration 2
 It observes existing OTel GenAI spans and cast.db agent runs; it never gates.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"

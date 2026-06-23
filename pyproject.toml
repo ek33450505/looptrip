@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "looptrip"
-version = "0.1.1"
+version = "0.1.2"
 description = "Deterministic, framework-agnostic detector of multi-agent coordination pathologies that trips at iteration 2"
 readme = "README.md"
 license = {text = "Apache-2.0"}

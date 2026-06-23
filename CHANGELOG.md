@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] — 2026-06-23
+
+Audit-remediation release: a four-dimension code audit (bugs, security,
+performance, test coverage) surfaced 15 findings — all independently verified and
+fixed here. No public API was removed. Two observable changes live in the optional
+`[otel]` surface (see **Changed**).
+
+### Changed
+
+- **Uniform OTel timestamps (determinism fix).** `unix_nanos_to_iso` now always
+  emits a fixed-width 9-digit fractional component, so whole-second values render
+  as `2024-06-01T00:00:01.000000000Z` (previously `…01Z`). Downstream ordering is a
+  lexicographic string compare, and the old two-shape output could sort an
+  exact-second event *after* sub-second events in the same second, corrupting the
+  event order fed to the detectors. The uniform shape makes lexicographic order
+  equal chronological order.
+- **Bounded live `LooptripSpanProcessor`.** The rolling event buffer is now backed
+  by a `collections.deque(maxlen=max_window)` and `max_window` has a finite default
+  (was `None`/unbounded); the de-duplication fired-set is bounded as well. This caps
+  memory and per-span work under long-running or adversarial span streams. Pass
+  `max_window=None` explicitly to restore the previous unbounded behavior.
+- **Portable cast.db live loader.** The cast.db scripts directory now resolves from
+  the `CAST_DB_SCRIPTS_DIR` environment variable (default `~/.claude/scripts`)
+  instead of a hardcoded absolute path, so live `cast-db:<id>` mode works on any
+  machine.
+
+### Fixed
+
+- **Null-safe event ordering.** The CLI and `looptrip proof` sort paths no longer
+  raise `TypeError` when a cast.db row has a `NULL` started_at; the sort key now
+  honors the adapter's documented null-first ordering.
+- **Clean errors on hostile input.** Deeply-nested or oversized trace files now exit
+  2 cleanly instead of escaping the error contract as an uncaught `RecursionError`
+  traceback; ingestion enforces a file-size cap and a JSONL span-count cap.
+- **No `sys.path` shadowing.** The cast.db loader loads its helper via an explicit
+  `importlib` file spec rather than permanently inserting a directory at
+  `sys.path[0]`, removing a module-shadowing vector.
+
+### Performance
+
+- Hoisted redundant per-event allocations out of the detector hot loops (skip list
+  re-copies when the input is already a list; precompute the non-termination
+  exempt-set unions and the deadlock lowercased blocked-states set once per call).
+  Behavior-preserving — detection output is unchanged.
+
+### Internal / CI
+
+- New `tests/test_stdlib_core.py` asserts the core package imports with
+  OpenTelemetry absent and that `looptrip.otel_live` raises `ImportError`, guarding
+  the stdlib-only-core contract. CI adds a no-`[otel]` job and now tests Python
+  3.10, 3.11, 3.12, and 3.13 (matching the package classifiers).
+
 ## [0.1.1] — 2026-06-22
 
 This is the first published artifact to actually contain the OpenTelemetry
