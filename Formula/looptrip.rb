@@ -5,8 +5,8 @@ class Looptrip < Formula
   homepage "https://github.com/ek33450505/looptrip"
   # Points at the published PyPI sdist (not a GitHub archive); sha256 verified
   # against files.pythonhosted.org.
-  url "https://files.pythonhosted.org/packages/83/11/7c2e4cd3189f1c18369840dc3fdaa3475efb9c4fbf4b70036c2361f3f9bb/looptrip-0.1.1.tar.gz"
-  sha256 "bbf019a4ae2b27b74f92193d6d1e7ff73a4b964ba6623778924b5fffe4b6cf21"
+  url "https://files.pythonhosted.org/packages/cc/b5/653ac452da81f71c9f4fb9443cee042c9781fb7dd571d42ce612af06233a/looptrip-0.1.2.tar.gz"
+  sha256 "a3174d240eea6784628fb130f6bb65ac3615dae85eeb04e4eea32ecc2b521310"
   license "Apache-2.0"
 
   depends_on "python@3.13"
